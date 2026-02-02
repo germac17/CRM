@@ -1,0 +1,8 @@
+[
+  {
+    "id": "usr-admin",
+    "name": "Администратор",
+    "email": "admin@crm.ru",
+    "password": "admin"
+  }
+]
