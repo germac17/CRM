@@ -28,14 +28,18 @@ type AuthUser = {
   name: string;
   email: string;
 };
+
+type CalendarEvent = {
+  id: string;
+  title: string;
+  date: string;
+  time: string;
+  participants: string;
+  status: string;
+  candidateId?: string;
+};
  
-const stages = [
-  { label: "Поиск", value: 140 },
-  { label: "Скрининг", value: 96 },
-  { label: "Интервью", value: 64 },
-  { label: "Оффер", value: 18 },
-  { label: "Найм", value: 9 }
-];
+const stageOrder = ["Поиск", "Скрининг", "Интервью", "Оффер", "Найм"];
  
 const tabs = [
   { id: "dashboard", label: "Дашборд" },
@@ -80,36 +84,6 @@ const communicationQueue = [
   }
 ];
  
-const calendarEvents = [
-  {
-    title: "Интервью: Дата-сайентист",
-    date: "2026-02-05",
-    time: "12:30",
-    participants: "Кандидат + 2 интервьюера",
-    status: "Подтверждено"
-  },
-  {
-    title: "Синхронизация с менеджером по найму",
-    date: "2026-02-07",
-    time: "15:00",
-    participants: "HR команда",
-    status: "Запланировано"
-  },
-  {
-    title: "Отправка оффера",
-    date: "2026-02-11",
-    time: "10:00",
-    participants: "Рекрутер",
-    status: "Запланировано"
-  },
-  {
-    title: "Review кандидата",
-    date: "2026-02-14",
-    time: "17:00",
-    participants: "Hiring manager",
-    status: "В работе"
-  }
-];
  
 const analyticsCharts = [
   {
@@ -182,6 +156,7 @@ export default function App() {
   const [vacancies, setVacancies] = useState<Vacancy[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(() => getTabFromHash());
@@ -198,6 +173,15 @@ export default function App() {
   });
   const [calendarDate, setCalendarDate] = useState(() => new Date());
   const [calendarFilter, setCalendarFilter] = useState("Все");
+  const [showEventModal, setShowEventModal] = useState(false);
+  const [eventForm, setEventForm] = useState({
+    title: "",
+    date: "",
+    time: "",
+    participants: "",
+    status: "Запланировано",
+    candidateId: ""
+  });
   const [matchingForm, setMatchingForm] = useState({
     candidateId: "",
     score: "0.8",
@@ -234,29 +218,43 @@ export default function App() {
   });
  
   useEffect(() => {
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+
     const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
- 
+
     const load = async () => {
+      setLoading(true);
       try {
-        const [vacancyRes, candidateRes, matchRes] = await Promise.all([
-          fetch(`${apiBase}/vacancies`),
-          fetch(`${apiBase}/candidates`),
-          fetch(`${apiBase}/matches?vacancyId=vac-001`)
+        const headers = {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        };
+
+        const [vacancyRes, candidateRes, matchRes, calendarRes] = await Promise.all([
+          fetch(`${apiBase}/vacancies`, { headers }),
+          fetch(`${apiBase}/candidates`, { headers }),
+          fetch(`${apiBase}/matches`, { headers }),
+          fetch(`${apiBase}/calendar`, { headers })
         ]);
- 
-        if (!vacancyRes.ok || !candidateRes.ok || !matchRes.ok) {
+
+        if (!vacancyRes.ok || !candidateRes.ok || !matchRes.ok || !calendarRes.ok) {
           throw new Error("API недоступен.");
         }
- 
+
         const vacancyJson = (await vacancyRes.json()) as { data: Vacancy[] };
         const candidateJson = (await candidateRes.json()) as {
           data: Candidate[];
         };
         const matchJson = (await matchRes.json()) as { data: Match[] };
- 
+        const calendarJson = (await calendarRes.json()) as { data: CalendarEvent[] };
+
         setVacancies(vacancyJson.data);
         setCandidates(candidateJson.data);
         setMatches(matchJson.data);
+        setCalendarEvents(calendarJson.data);
         setError(null);
       } catch (err) {
         const message =
@@ -266,9 +264,9 @@ export default function App() {
         setLoading(false);
       }
     };
- 
+
     load();
-  }, []);
+  }, [token]);
  
   useEffect(() => {
     const savedToken = localStorage.getItem("hrcrm_token");
@@ -300,15 +298,31 @@ export default function App() {
     const openVacancies = vacancies.filter((vacancy) =>
       vacancy.status.toLowerCase().includes("open")
     ).length;
- 
+    
+    const matchedCandidates = new Set(matches.map((m) => m.candidateId)).size;
+
     return [
       { label: "Открытые вакансии", value: String(openVacancies) },
       { label: "Кандидаты в воронке", value: String(candidates.length) },
-      { label: "Средний срок закрытия", value: "21 день" },
-      { label: "Алерты риска удержания", value: "7" }
+      { label: "ИИ матчинги", value: String(matchedCandidates) },
+      { label: "Всего вакансий", value: String(vacancies.length) }
     ];
-  }, [vacancies, candidates]);
+  }, [vacancies, candidates, matches]);
  
+  const stages = useMemo(() => {
+    const base = new Map<string, number>();
+    stageOrder.forEach((stage) => base.set(stage, 0));
+    candidates.forEach((candidate) => {
+      if (base.has(candidate.stage)) {
+        base.set(candidate.stage, (base.get(candidate.stage) ?? 0) + 1);
+      }
+    });
+    return Array.from(base.entries()).map(([label, value]) => ({
+      label,
+      value
+    }));
+  }, [candidates]);
+
   const stageStats = useMemo(() => {
     const base = new Map<string, number>();
     candidates.forEach((candidate) => {
@@ -452,35 +466,147 @@ export default function App() {
     setShowCandidateModal(true);
   };
  
-  const handleCandidateDelete = (candidateId: string) => {
-    setCandidates((prev) => prev.filter((item) => item.id !== candidateId));
-    setMatches((prev) =>
-      prev.filter((match) => match.candidateId !== candidateId)
-    );
+  const handleCandidateDelete = async (candidateId: string) => {
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    try {
+      const response = await fetch(`${apiBase}/candidates/${candidateId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        setCandidates((prev) => prev.filter((item) => item.id !== candidateId));
+        setMatches((prev) =>
+          prev.filter((match) => match.candidateId !== candidateId)
+        );
+      }
+    } catch (err) {
+      console.error("Ошибка удаления кандидата:", err);
+    }
   };
  
-  const handleMatchAdd = (event: FormEvent<HTMLFormElement>) => {
+  const handleMatchAdd = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!matchingForm.candidateId) {
       return;
     }
-    setMatches((prev) => [
-      ...prev,
-      {
-        candidateId: matchingForm.candidateId,
-        score: Number(matchingForm.score),
-        explanation:
-          matchingForm.explanation.trim() || "Добавлено вручную.",
-        vacancyId: "vac-001"
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    
+    try {
+      const response = await fetch(`${apiBase}/matches`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          candidateId: matchingForm.candidateId,
+          score: Number(matchingForm.score),
+          explanation: matchingForm.explanation.trim() || "Добавлено вручную.",
+          vacancyId: "vac-001"
+        })
+      });
+      
+      if (response.ok) {
+        const json = (await response.json()) as { data: Match };
+        setMatches((prev) => [...prev, json.data]);
       }
-    ]);
-    setMatchingForm({ candidateId: "", score: "0.8", explanation: "" });
+      setMatchingForm({ candidateId: "", score: "0.8", explanation: "" });
+    } catch (err) {
+      console.error("Ошибка добавления матча:", err);
+    }
   };
  
-  const handleMatchDelete = (candidateId: string) => {
-    setMatches((prev) =>
-      prev.filter((match) => match.candidateId !== candidateId)
-    );
+  const handleMatchDelete = async (candidateId: string) => {
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    try {
+      const response = await fetch(`${apiBase}/matches/${candidateId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        setMatches((prev) =>
+          prev.filter((match) => match.candidateId !== candidateId)
+        );
+      }
+    } catch (err) {
+      console.error("Ошибка удаления матча:", err);
+    }
+  };
+
+  const handleEventSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    
+    try {
+      const response = await fetch(`${apiBase}/calendar`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          title: eventForm.title,
+          date: eventForm.date,
+          time: eventForm.time,
+          participants: eventForm.participants,
+          status: eventForm.status,
+          candidateId: eventForm.candidateId || undefined
+        })
+      });
+      
+      if (response.ok) {
+        const json = (await response.json()) as { data: CalendarEvent };
+        setCalendarEvents((prev) => [...prev, json.data]);
+      }
+      setShowEventModal(false);
+      setEventForm({
+        title: "",
+        date: "",
+        time: "",
+        participants: "",
+        status: "Запланировано",
+        candidateId: ""
+      });
+    } catch (err) {
+      console.error("Ошибка добавления события:", err);
+    }
+  };
+
+  const handleEventDelete = async (eventId: string) => {
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    try {
+      const response = await fetch(`${apiBase}/calendar/${eventId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        setCalendarEvents((prev) => prev.filter((item) => item.id !== eventId));
+      }
+    } catch (err) {
+      console.error("Ошибка удаления события:", err);
+    }
+  };
+
+  const handleAddCandidateToCalendar = (candidateId: string) => {
+    const candidate = candidates.find((item) => item.id === candidateId);
+    if (!candidate) {
+      return;
+    }
+    setEventForm({
+      title: `Интервью: ${candidate.name}`,
+      date: "",
+      time: "",
+      participants: `${candidate.name} + интервьюер`,
+      status: "Запланировано",
+      candidateId
+    });
+    setShowEventModal(true);
   };
  
   const handleAuthSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -540,43 +666,66 @@ export default function App() {
     localStorage.removeItem("hrcrm_user");
   };
  
-  const handleVacancySubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleVacancySubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (editingVacancyId) {
-      setVacancies((prev) =>
-        prev.map((vacancy) =>
-          vacancy.id === editingVacancyId
-            ? {
-                ...vacancy,
-                title: vacancyForm.title,
-                department: vacancyForm.department,
-                location: vacancyForm.location,
-                status: vacancyForm.status
-              }
-            : vacancy
-        )
-      );
-      setEditingVacancyId(null);
-    } else {
-      setVacancies((prev) => [
-        ...prev,
-        {
-          id: `vac-${Date.now()}`,
-          title: vacancyForm.title,
-          department: vacancyForm.department,
-          location: vacancyForm.location,
-          status: vacancyForm.status
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    
+    try {
+      if (editingVacancyId) {
+        const response = await fetch(`${apiBase}/vacancies/${editingVacancyId}`, {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            title: vacancyForm.title,
+            department: vacancyForm.department,
+            location: vacancyForm.location,
+            status: vacancyForm.status
+          })
+        });
+        
+        if (response.ok) {
+          const json = (await response.json()) as { data: Vacancy };
+          setVacancies((prev) =>
+            prev.map((vacancy) =>
+              vacancy.id === editingVacancyId ? json.data : vacancy
+            )
+          );
         }
-      ]);
+        setEditingVacancyId(null);
+      } else {
+        const response = await fetch(`${apiBase}/vacancies`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            title: vacancyForm.title,
+            department: vacancyForm.department,
+            location: vacancyForm.location,
+            status: vacancyForm.status
+          })
+        });
+        
+        if (response.ok) {
+          const json = (await response.json()) as { data: Vacancy };
+          setVacancies((prev) => [...prev, json.data]);
+        }
+      }
+      setShowVacancyModal(false);
+      setVacancyForm({
+        title: "",
+        department: "",
+        location: "",
+        level: "Middle",
+        status: "open"
+      });
+    } catch (err) {
+      console.error("Ошибка сохранения вакансии:", err);
     }
-    setShowVacancyModal(false);
-    setVacancyForm({
-      title: "",
-      department: "",
-      location: "",
-      level: "Middle",
-      status: "open"
-    });
   };
  
   const handleVacancyEdit = (vacancyId: string) => {
@@ -595,46 +744,82 @@ export default function App() {
     setShowVacancyModal(true);
   };
  
-  const handleVacancyDelete = (vacancyId: string) => {
-    setVacancies((prev) => prev.filter((item) => item.id !== vacancyId));
+  const handleVacancyDelete = async (vacancyId: string) => {
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    try {
+      const response = await fetch(`${apiBase}/vacancies/${vacancyId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        setVacancies((prev) => prev.filter((item) => item.id !== vacancyId));
+      }
+    } catch (err) {
+      console.error("Ошибка удаления вакансии:", err);
+    }
   };
  
-  const handleCandidateSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleCandidateSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (editingCandidateId) {
-      setCandidates((prev) =>
-        prev.map((candidate) =>
-          candidate.id === editingCandidateId
-            ? {
-                ...candidate,
-                name: candidateForm.name,
-                role: candidateForm.role,
-                stage: candidateForm.stage
-              }
-            : candidate
-        )
-      );
-      setEditingCandidateId(null);
-    } else {
-      setCandidates((prev) => [
-        ...prev,
-        {
-          id: `cand-${Date.now()}`,
-          name: candidateForm.name,
-          role: candidateForm.role,
-          skills: [],
-          stage: candidateForm.stage
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    
+    try {
+      if (editingCandidateId) {
+        const response = await fetch(`${apiBase}/candidates/${editingCandidateId}`, {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            name: candidateForm.name,
+            role: candidateForm.role,
+            stage: candidateForm.stage
+          })
+        });
+        
+        if (response.ok) {
+          const json = (await response.json()) as { data: Candidate };
+          setCandidates((prev) =>
+            prev.map((candidate) =>
+              candidate.id === editingCandidateId ? json.data : candidate
+            )
+          );
         }
-      ]);
+        setEditingCandidateId(null);
+      } else {
+        const response = await fetch(`${apiBase}/candidates`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            name: candidateForm.name,
+            role: candidateForm.role,
+            stage: candidateForm.stage,
+            skills: []
+          })
+        });
+        
+        if (response.ok) {
+          const json = (await response.json()) as { data: Candidate };
+          setCandidates((prev) => [...prev, json.data]);
+        }
+      }
+      setShowCandidateModal(false);
+      setCandidateForm({
+        name: "",
+        role: "",
+        stage: "Скрининг",
+        source: "",
+        notes: ""
+      });
+    } catch (err) {
+      console.error("Ошибка сохранения кандидата:", err);
     }
-    setShowCandidateModal(false);
-    setCandidateForm({
-      name: "",
-      role: "",
-      stage: "Скрининг",
-      source: "",
-      notes: ""
-    });
   };
  
   if (!token) {
@@ -896,36 +1081,6 @@ export default function App() {
                 )}
               </div>
             </div>
- 
-            <div className="card">
-              <h3>Жизненный цикл и удержание</h3>
-              <p className="muted">
-                Мониторинг онбординга, оценок эффективности и ИИ инсайтов по
-                риску ухода.
-              </p>
-              <div className="timeline">
-                <div>
-                  <strong>Онбординг</strong>
-                  <p className="muted">72% задач в срок</p>
-                </div>
-                <div>
-                  <strong>Эффективность</strong>
-                  <p className="muted">34 оценки в этом месяце</p>
-                </div>
-                <div>
-                  <strong>Риск удержания</strong>
-                  <p className="muted">7 алертов, 3 высокого приоритета</p>
-                </div>
-              </div>
-            </div>
- 
-            <div className="card">
-              <h3>Интеграции</h3>
-              <p className="muted">
-                Подключено: Google Workspace, Outlook, Slack, HH.ru, LinkedIn.
-              </p>
-              <button className="secondary-btn">Управление интеграциями</button>
-            </div>
           </section>
         </>
       ) : null}
@@ -1012,6 +1167,14 @@ export default function App() {
                       <span className="muted">{candidate.role}</span>
                     </div>
                     <div className="list-actions">
+                      <button
+                        className="calendar-btn"
+                        type="button"
+                        onClick={() => handleAddCandidateToCalendar(candidate.id)}
+                        title="Добавить в календарь"
+                      >
+                        📅
+                      </button>
                       <button
                         className="secondary-btn"
                         type="button"
@@ -1167,7 +1330,26 @@ export default function App() {
             </div>
           </div>
           <div className="card">
-            <h3>Список событий</h3>
+            <div className="calendar-header">
+              <h3>Список событий</h3>
+              <button
+                className="primary-btn"
+                type="button"
+                onClick={() => {
+                  setEventForm({
+                    title: "",
+                    date: "",
+                    time: "",
+                    participants: "",
+                    status: "Запланировано",
+                    candidateId: ""
+                  });
+                  setShowEventModal(true);
+                }}
+              >
+                Создать напоминание
+              </button>
+            </div>
             <div className="filters">
               {["Все", "Запланировано", "В работе", "Подтверждено"].map(
                 (status) => (
@@ -1185,20 +1367,33 @@ export default function App() {
               )}
             </div>
             <ul className="funnel">
-              {filteredEvents.map((event) => (
-                <li key={`${event.title}-${event.date}`}>
-                  <span>
-                    {event.title}
-                    <span className="muted">
-                      {" "}
-                      · {event.date} · {event.time}
+              {filteredEvents.length === 0 ? (
+                <p className="muted">Событий не найдено</p>
+              ) : (
+                filteredEvents.map((event) => (
+                  <li key={event.id}>
+                    <span>
+                      {event.title}
+                      <span className="muted">
+                        {" "}
+                        · {event.date} · {event.time}
+                      </span>
                     </span>
-                  </span>
-                  <span className={pillClass(event.status)}>
-                    {event.status}
-                  </span>
-                </li>
-              ))}
+                    <div className="list-actions">
+                      <span className={pillClass(event.status)}>
+                        {event.status}
+                      </span>
+                      <button
+                        className="danger-btn"
+                        type="button"
+                        onClick={() => handleEventDelete(event.id)}
+                      >
+                        Удалить
+                      </button>
+                    </div>
+                  </li>
+                ))
+              )}
             </ul>
           </div>
         </section>
@@ -1763,6 +1958,123 @@ export default function App() {
                     setShowCandidateModal(false);
                     setEditingCandidateId(null);
                   }}
+                >
+                  Отмена
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {showEventModal ? (
+        <div className="modal-backdrop">
+          <div className="modal">
+            <div className="modal-header">
+              <h3>Создать напоминание</h3>
+              <button
+                className="secondary-btn"
+                onClick={() => setShowEventModal(false)}
+                type="button"
+              >
+                Закрыть
+              </button>
+            </div>
+            <form className="modal-body" onSubmit={handleEventSubmit}>
+              <label className="field">
+                Название
+                <input
+                  type="text"
+                  value={eventForm.title}
+                  onChange={(event) =>
+                    setEventForm((prev) => ({
+                      ...prev,
+                      title: event.target.value
+                    }))
+                  }
+                  placeholder="Интервью с кандидатом"
+                  required
+                />
+              </label>
+              <label className="field">
+                Дата
+                <input
+                  type="date"
+                  value={eventForm.date}
+                  onChange={(event) =>
+                    setEventForm((prev) => ({
+                      ...prev,
+                      date: event.target.value
+                    }))
+                  }
+                  required
+                />
+              </label>
+              <label className="field">
+                Время
+                <input
+                  type="time"
+                  value={eventForm.time}
+                  onChange={(event) =>
+                    setEventForm((prev) => ({
+                      ...prev,
+                      time: event.target.value
+                    }))
+                  }
+                  required
+                />
+              </label>
+              <label className="field">
+                Участники
+                <input
+                  type="text"
+                  value={eventForm.participants}
+                  onChange={(event) =>
+                    setEventForm((prev) => ({
+                      ...prev,
+                      participants: event.target.value
+                    }))
+                  }
+                  placeholder="HR команда"
+                  required
+                />
+              </label>
+              <label className="field">
+                Статус
+                <select
+                  value={eventForm.status}
+                  onChange={(event) =>
+                    setEventForm((prev) => ({
+                      ...prev,
+                      status: event.target.value
+                    }))
+                  }
+                >
+                  <option>Запланировано</option>
+                  <option>В работе</option>
+                  <option>Подтверждено</option>
+                  <option>Отменено</option>
+                </select>
+              </label>
+              {eventForm.candidateId ? (
+                <div className="field">
+                  <strong>Связано с кандидатом</strong>
+                  <p className="muted">
+                    {
+                      candidates.find((c) => c.id === eventForm.candidateId)
+                        ?.name
+                    }
+                  </p>
+                </div>
+              ) : null}
+              <div className="modal-actions">
+                <button className="primary-btn" type="submit">
+                  Добавить
+                </button>
+                <button
+                  className="secondary-btn"
+                  type="button"
+                  onClick={() => setShowEventModal(false)}
                 >
                   Отмена
                 </button>
