@@ -38,6 +38,29 @@ type CalendarEvent = {
   status: string;
   candidateId?: string;
 };
+
+type Communication = {
+  id: string;
+  channel: string;
+  template: string;
+  audience: string;
+  status: string;
+};
+
+type SupportMessage = {
+  id: string;
+  content: string;
+  sender: "user" | "support";
+  timestamp: string;
+};
+
+type SupportChat = {
+  userId: string;
+  userName: string;
+  userEmail: string;
+  messages: SupportMessage[];
+  lastMessage?: SupportMessage;
+};
  
 const stageOrder = ["Поиск", "Скрининг", "Интервью", "Оффер", "Найм"];
  
@@ -63,26 +86,6 @@ const getTabFromHash = () => {
   return tabs.some((item) => item.id === tab) ? tab ?? "dashboard" : "dashboard";
 };
  
-const communicationQueue = [
-  {
-    channel: "Email",
-    template: "Приглашение на интервью",
-    audience: "Кандидаты Дата-сайентист",
-    status: "Запланировано"
-  },
-  {
-    channel: "SMS",
-    template: "Напоминание о встрече",
-    audience: "Интервью сегодня",
-    status: "В работе"
-  },
-  {
-    channel: "Чат",
-    template: "Старт онбординга",
-    audience: "Новые сотрудники",
-    status: "Готово"
-  }
-];
  
  
 const analyticsCharts = [
@@ -157,6 +160,7 @@ export default function App() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [communications, setCommunications] = useState<Communication[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(() => getTabFromHash());
@@ -182,6 +186,14 @@ export default function App() {
     status: "Запланировано",
     candidateId: ""
   });
+  const [showCommModal, setShowCommModal] = useState(false);
+  const [editingCommId, setEditingCommId] = useState<string | null>(null);
+  const [commForm, setCommForm] = useState({
+    channel: "Email",
+    template: "",
+    audience: "",
+    status: "Запланировано"
+  });
   const [matchingForm, setMatchingForm] = useState({
     candidateId: "",
     score: "0.8",
@@ -197,6 +209,13 @@ export default function App() {
   const [enabledWidgets, setEnabledWidgets] = useState<string[]>(
     analyticsWidgets.map((widget) => widget.id)
   );
+  const [showSupportChat, setShowSupportChat] = useState(false);
+  const [supportMessages, setSupportMessages] = useState<SupportMessage[]>([]);
+  const [supportInput, setSupportInput] = useState("");
+  const [supportLoading, setSupportLoading] = useState(false);
+  const [adminChats, setAdminChats] = useState<SupportChat[]>([]);
+  const [selectedChatUserId, setSelectedChatUserId] = useState<string | null>(null);
+  const [adminReplyInput, setAdminReplyInput] = useState("");
   const [showVacancyModal, setShowVacancyModal] = useState(false);
   const [showCandidateModal, setShowCandidateModal] = useState(false);
   const [vacancyForm, setVacancyForm] = useState({
@@ -233,14 +252,16 @@ export default function App() {
           "Content-Type": "application/json"
         };
 
-        const [vacancyRes, candidateRes, matchRes, calendarRes] = await Promise.all([
+        const [vacancyRes, candidateRes, matchRes, calendarRes, commRes, supportRes] = await Promise.all([
           fetch(`${apiBase}/vacancies`, { headers }),
           fetch(`${apiBase}/candidates`, { headers }),
           fetch(`${apiBase}/matches`, { headers }),
-          fetch(`${apiBase}/calendar`, { headers })
+          fetch(`${apiBase}/calendar`, { headers }),
+          fetch(`${apiBase}/communications`, { headers }),
+          fetch(`${apiBase}/support/messages`, { headers })
         ]);
 
-        if (!vacancyRes.ok || !candidateRes.ok || !matchRes.ok || !calendarRes.ok) {
+        if (!vacancyRes.ok || !candidateRes.ok || !matchRes.ok || !calendarRes.ok || !commRes.ok || !supportRes.ok) {
           throw new Error("API недоступен.");
         }
 
@@ -250,11 +271,15 @@ export default function App() {
         };
         const matchJson = (await matchRes.json()) as { data: Match[] };
         const calendarJson = (await calendarRes.json()) as { data: CalendarEvent[] };
+        const commJson = (await commRes.json()) as { data: Communication[] };
+        const supportJson = (await supportRes.json()) as { data: SupportMessage[] };
 
         setVacancies(vacancyJson.data);
         setCandidates(candidateJson.data);
         setMatches(matchJson.data);
         setCalendarEvents(calendarJson.data);
+        setCommunications(commJson.data);
+        setSupportMessages(supportJson.data);
         setError(null);
       } catch (err) {
         const message =
@@ -394,7 +419,28 @@ export default function App() {
       setActiveTab("dashboard");
       window.location.hash = "tab=dashboard";
     }
-  }, [activeTab, isAdmin]);
+    
+    // Загрузить чаты для администратора
+    if (activeTab === "admin" && isAdmin && token) {
+      const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+      const loadChats = async () => {
+        try {
+          const response = await fetch(`${apiBase}/admin/support-chats`, {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          });
+          if (response.ok) {
+            const json = (await response.json()) as { data: SupportChat[] };
+            setAdminChats(json.data);
+          }
+        } catch (err) {
+          console.error("Ошибка загрузки чатов:", err);
+        }
+      };
+      loadChats();
+    }
+  }, [activeTab, isAdmin, token]);
  
   const calendarMonthLabel = calendarDate.toLocaleDateString("ru-RU", {
     month: "long",
@@ -480,6 +526,9 @@ export default function App() {
         setMatches((prev) =>
           prev.filter((match) => match.candidateId !== candidateId)
         );
+        setCalendarEvents((prev) =>
+          prev.filter((event) => event.candidateId !== candidateId)
+        );
       }
     } catch (err) {
       console.error("Ошибка удаления кандидата:", err);
@@ -511,8 +560,8 @@ export default function App() {
       if (response.ok) {
         const json = (await response.json()) as { data: Match };
         setMatches((prev) => [...prev, json.data]);
+        setMatchingForm({ candidateId: "", score: "0.8", explanation: "" });
       }
-      setMatchingForm({ candidateId: "", score: "0.8", explanation: "" });
     } catch (err) {
       console.error("Ошибка добавления матча:", err);
     }
@@ -561,16 +610,16 @@ export default function App() {
       if (response.ok) {
         const json = (await response.json()) as { data: CalendarEvent };
         setCalendarEvents((prev) => [...prev, json.data]);
+        setShowEventModal(false);
+        setEventForm({
+          title: "",
+          date: "",
+          time: "",
+          participants: "",
+          status: "Запланировано",
+          candidateId: ""
+        });
       }
-      setShowEventModal(false);
-      setEventForm({
-        title: "",
-        date: "",
-        time: "",
-        participants: "",
-        status: "Запланировано",
-        candidateId: ""
-      });
     } catch (err) {
       console.error("Ошибка добавления события:", err);
     }
@@ -607,6 +656,176 @@ export default function App() {
       candidateId
     });
     setShowEventModal(true);
+  };
+
+  const handleCommSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    
+    try {
+      if (editingCommId) {
+        const response = await fetch(`${apiBase}/communications/${editingCommId}`, {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            channel: commForm.channel,
+            template: commForm.template,
+            audience: commForm.audience,
+            status: commForm.status
+          })
+        });
+        
+        if (response.ok) {
+          const json = (await response.json()) as { data: Communication };
+          setCommunications((prev) =>
+            prev.map((comm) => (comm.id === editingCommId ? json.data : comm))
+          );
+          setEditingCommId(null);
+          setShowCommModal(false);
+          setCommForm({
+            channel: "Email",
+            template: "",
+            audience: "",
+            status: "Запланировано"
+          });
+        }
+      } else {
+        const response = await fetch(`${apiBase}/communications`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            channel: commForm.channel,
+            template: commForm.template,
+            audience: commForm.audience,
+            status: commForm.status
+          })
+        });
+        
+        if (response.ok) {
+          const json = (await response.json()) as { data: Communication };
+          setCommunications((prev) => [...prev, json.data]);
+          setShowCommModal(false);
+          setCommForm({
+            channel: "Email",
+            template: "",
+            audience: "",
+            status: "Запланировано"
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Ошибка сохранения коммуникации:", err);
+    }
+  };
+
+  const handleCommEdit = (commId: string) => {
+    const comm = communications.find((item) => item.id === commId);
+    if (!comm) {
+      return;
+    }
+    setEditingCommId(commId);
+    setCommForm({
+      channel: comm.channel,
+      template: comm.template,
+      audience: comm.audience,
+      status: comm.status
+    });
+    setShowCommModal(true);
+  };
+
+  const handleCommDelete = async (commId: string) => {
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    try {
+      const response = await fetch(`${apiBase}/communications/${commId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        setCommunications((prev) => prev.filter((item) => item.id !== commId));
+      }
+    } catch (err) {
+      console.error("Ошибка удаления коммуникации:", err);
+    }
+  };
+
+  const handleSupportSend = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!supportInput.trim()) {
+      return;
+    }
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    setSupportLoading(true);
+    
+    try {
+      const response = await fetch(`${apiBase}/support/messages`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          content: supportInput.trim()
+        })
+      });
+      
+      if (response.ok) {
+        const json = (await response.json()) as { data: SupportMessage[] };
+        setSupportMessages((prev) => [...prev, ...json.data]);
+        setSupportInput("");
+      }
+    } catch (err) {
+      console.error("Ошибка отправки сообщения:", err);
+    } finally {
+      setSupportLoading(false);
+    }
+  };
+
+  const handleAdminReply = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!adminReplyInput.trim() || !selectedChatUserId) {
+      return;
+    }
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    
+    try {
+      const response = await fetch(`${apiBase}/admin/support-reply`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          userId: selectedChatUserId,
+          content: adminReplyInput.trim()
+        })
+      });
+      
+      if (response.ok) {
+        const json = (await response.json()) as { data: SupportMessage };
+        setAdminChats((prev) =>
+          prev.map((chat) =>
+            chat.userId === selectedChatUserId
+              ? {
+                  ...chat,
+                  messages: [...chat.messages, json.data],
+                  lastMessage: json.data
+                }
+              : chat
+          )
+        );
+        setAdminReplyInput("");
+      }
+    } catch (err) {
+      console.error("Ошибка отправки ответа:", err);
+    }
   };
  
   const handleAuthSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -693,8 +912,16 @@ export default function App() {
               vacancy.id === editingVacancyId ? json.data : vacancy
             )
           );
+          setEditingVacancyId(null);
+          setShowVacancyModal(false);
+          setVacancyForm({
+            title: "",
+            department: "",
+            location: "",
+            level: "Middle",
+            status: "open"
+          });
         }
-        setEditingVacancyId(null);
       } else {
         const response = await fetch(`${apiBase}/vacancies`, {
           method: "POST",
@@ -713,16 +940,16 @@ export default function App() {
         if (response.ok) {
           const json = (await response.json()) as { data: Vacancy };
           setVacancies((prev) => [...prev, json.data]);
+          setShowVacancyModal(false);
+          setVacancyForm({
+            title: "",
+            department: "",
+            location: "",
+            level: "Middle",
+            status: "open"
+          });
         }
       }
-      setShowVacancyModal(false);
-      setVacancyForm({
-        title: "",
-        department: "",
-        location: "",
-        level: "Middle",
-        status: "open"
-      });
     } catch (err) {
       console.error("Ошибка сохранения вакансии:", err);
     }
@@ -755,6 +982,7 @@ export default function App() {
       });
       if (response.ok) {
         setVacancies((prev) => prev.filter((item) => item.id !== vacancyId));
+        setMatches((prev) => prev.filter((match) => match.vacancyId !== vacancyId));
       }
     } catch (err) {
       console.error("Ошибка удаления вакансии:", err);
@@ -787,8 +1015,16 @@ export default function App() {
               candidate.id === editingCandidateId ? json.data : candidate
             )
           );
+          setEditingCandidateId(null);
+          setShowCandidateModal(false);
+          setCandidateForm({
+            name: "",
+            role: "",
+            stage: "Скрининг",
+            source: "",
+            notes: ""
+          });
         }
-        setEditingCandidateId(null);
       } else {
         const response = await fetch(`${apiBase}/candidates`, {
           method: "POST",
@@ -807,16 +1043,16 @@ export default function App() {
         if (response.ok) {
           const json = (await response.json()) as { data: Candidate };
           setCandidates((prev) => [...prev, json.data]);
+          setShowCandidateModal(false);
+          setCandidateForm({
+            name: "",
+            role: "",
+            stage: "Скрининг",
+            source: "",
+            notes: ""
+          });
         }
       }
-      setShowCandidateModal(false);
-      setCandidateForm({
-        name: "",
-        role: "",
-        stage: "Скрининг",
-        source: "",
-        notes: ""
-      });
     } catch (err) {
       console.error("Ошибка сохранения кандидата:", err);
     }
@@ -1234,36 +1470,63 @@ export default function App() {
       {activeTab === "communications" ? (
         <section className="grid">
           <div className="card">
-            <h3>Автоматизированные коммуникации</h3>
-            <p className="muted">
-              Шаблоны сообщений, расписание и омниканальность: email, чат, SMS.
-            </p>
+            <div className="calendar-header">
+              <div>
+                <h3>Автоматизированные коммуникации</h3>
+                <p className="muted">
+                  Шаблоны сообщений, расписание и омниканальность: email, чат, SMS.
+                </p>
+              </div>
+              <button
+                className="primary-btn"
+                type="button"
+                onClick={() => {
+                  setEditingCommId(null);
+                  setCommForm({
+                    channel: "Email",
+                    template: "",
+                    audience: "",
+                    status: "Запланировано"
+                  });
+                  setShowCommModal(true);
+                }}
+              >
+                Создать коммуникацию
+              </button>
+            </div>
             <ul className="funnel">
-              {communicationQueue.map((item) => (
-                <li key={`${item.template}-${item.channel}`}>
-                  <span>
-                    {item.template}
-                    <span className="muted"> · {item.channel}</span>
-                  </span>
-                  <span className={pillClass(item.status)}>{item.status}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div className="card">
-            <h3>Сегменты</h3>
-            <p className="muted">
-              Триггеры по этапам, напоминания и сценарии вовлечения.
-            </p>
-            <ul className="timeline">
-              <li>
-                <strong>Интервью сегодня</strong>
-                <p className="muted">SMS за 2 часа до встречи</p>
-              </li>
-              <li>
-                <strong>Новые сотрудники</strong>
-                <p className="muted">Email о старте онбординга</p>
-              </li>
+              {communications.length === 0 ? (
+                <p className="muted">Коммуникаций пока нет</p>
+              ) : (
+                communications.map((item) => (
+                  <li key={item.id}>
+                    <div className="list-main">
+                      <span>
+                        {item.template}
+                        <span className="muted"> · {item.channel}</span>
+                      </span>
+                      <span className="muted">{item.audience}</span>
+                    </div>
+                    <div className="list-actions">
+                      <span className={pillClass(item.status)}>{item.status}</span>
+                      <button
+                        className="secondary-btn"
+                        type="button"
+                        onClick={() => handleCommEdit(item.id)}
+                      >
+                        Редактировать
+                      </button>
+                      <button
+                        className="danger-btn"
+                        type="button"
+                        onClick={() => handleCommDelete(item.id)}
+                      >
+                        Удалить
+                      </button>
+                    </div>
+                  </li>
+                ))
+              )}
             </ul>
           </div>
         </section>
@@ -1708,31 +1971,118 @@ export default function App() {
       ) : null}
  
       {activeTab === "admin" && isAdmin ? (
-        <section className="grid">
-          <div className="card">
-            <h3>Администрирование</h3>
-            <ul className="funnel">
-              {adminControls.map((control) => (
-                <li key={control.title}>
-                  <span>
-                    {control.title}
-                    <span className="muted"> · {control.description}</span>
-                  </span>
-                  <span className={pillClass(control.status)}>
-                    {control.status}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div className="card">
-            <h3>Безопасность</h3>
-            <p className="muted">
-              Шифрование данных, аудит доступа, журналирование, требования GDPR.
-            </p>
-            <button className="secondary-btn">Открыть журнал аудита</button>
-          </div>
-        </section>
+        <>
+          <section className="grid">
+            <div className="card">
+              <h3>Администрирование</h3>
+              <ul className="funnel">
+                {adminControls.map((control) => (
+                  <li key={control.title}>
+                    <span>
+                      {control.title}
+                      <span className="muted"> · {control.description}</span>
+                    </span>
+                    <span className={pillClass(control.status)}>
+                      {control.status}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="card">
+              <h3>Безопасность</h3>
+              <p className="muted">
+                Шифрование данных, аудит доступа, журналирование, требования GDPR.
+              </p>
+              <button className="secondary-btn">Открыть журнал аудита</button>
+            </div>
+          </section>
+
+          <section className="grid">
+            <div className="card">
+              <h3>Чаты поддержки</h3>
+              <p className="muted">
+                Список обращений пользователей. Выберите чат для ответа.
+              </p>
+              <ul className="funnel">
+                {adminChats.length === 0 ? (
+                  <p className="muted">Обращений пока нет</p>
+                ) : (
+                  adminChats.map((chat) => (
+                    <li
+                      key={chat.userId}
+                      onClick={() => setSelectedChatUserId(chat.userId)}
+                      style={{ cursor: "pointer" }}
+                    >
+                      <div className="list-main">
+                        <span>
+                          {chat.userName}
+                          <span className="muted"> · {chat.userEmail}</span>
+                        </span>
+                        <span className="muted">
+                          {chat.lastMessage?.content.slice(0, 50)}
+                          {chat.lastMessage && chat.lastMessage.content.length > 50
+                            ? "..."
+                            : ""}
+                        </span>
+                      </div>
+                      <span className="pill">
+                        {chat.messages.length} сообщ.
+                      </span>
+                    </li>
+                  ))
+                )}
+              </ul>
+            </div>
+
+            {selectedChatUserId ? (
+              <div className="card">
+                <h3>
+                  Чат с{" "}
+                  {
+                    adminChats.find((c) => c.userId === selectedChatUserId)
+                      ?.userName
+                  }
+                </h3>
+                <div className="support-chat-body" style={{ maxHeight: "400px" }}>
+                  {adminChats
+                    .find((c) => c.userId === selectedChatUserId)
+                    ?.messages.map((msg) => (
+                      <div
+                        key={msg.id}
+                        className={`support-message ${
+                          msg.sender === "user" ? "user" : "support"
+                        }`}
+                      >
+                        <p>{msg.content}</p>
+                        <span className="muted">
+                          {new Date(msg.timestamp).toLocaleTimeString("ru-RU", {
+                            hour: "2-digit",
+                            minute: "2-digit"
+                          })}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+                <form className="form-grid" onSubmit={handleAdminReply}>
+                  <label className="field">
+                    Ваш ответ
+                    <textarea
+                      rows={3}
+                      value={adminReplyInput}
+                      onChange={(event) => setAdminReplyInput(event.target.value)}
+                      placeholder="Напишите ответ пользователю..."
+                      required
+                    />
+                  </label>
+                  <button className="primary-btn" type="submit">
+                    Отправить
+                  </button>
+                </form>
+              </div>
+            ) : null}
+          </section>
+        </>
       ) : null}
  
  
@@ -2082,6 +2432,193 @@ export default function App() {
             </form>
           </div>
         </div>
+      ) : null}
+
+      {showCommModal ? (
+        <div className="modal-backdrop">
+          <div className="modal">
+            <div className="modal-header">
+              <h3>
+                {editingCommId
+                  ? "Редактировать коммуникацию"
+                  : "Создать коммуникацию"}
+              </h3>
+              <button
+                className="secondary-btn"
+                onClick={() => {
+                  setShowCommModal(false);
+                  setEditingCommId(null);
+                }}
+                type="button"
+              >
+                Закрыть
+              </button>
+            </div>
+            <form className="modal-body" onSubmit={handleCommSubmit}>
+              <label className="field">
+                Канал
+                <select
+                  value={commForm.channel}
+                  onChange={(event) =>
+                    setCommForm((prev) => ({
+                      ...prev,
+                      channel: event.target.value
+                    }))
+                  }
+                >
+                  <option>Email</option>
+                  <option>SMS</option>
+                  <option>Чат</option>
+                  <option>Push</option>
+                </select>
+              </label>
+              <label className="field">
+                Шаблон
+                <input
+                  type="text"
+                  value={commForm.template}
+                  onChange={(event) =>
+                    setCommForm((prev) => ({
+                      ...prev,
+                      template: event.target.value
+                    }))
+                  }
+                  placeholder="Приглашение на интервью"
+                  required
+                />
+              </label>
+              <label className="field">
+                Аудитория
+                <input
+                  type="text"
+                  value={commForm.audience}
+                  onChange={(event) =>
+                    setCommForm((prev) => ({
+                      ...prev,
+                      audience: event.target.value
+                    }))
+                  }
+                  placeholder="Кандидаты на вакансию X"
+                  required
+                />
+              </label>
+              <label className="field">
+                Статус
+                <select
+                  value={commForm.status}
+                  onChange={(event) =>
+                    setCommForm((prev) => ({
+                      ...prev,
+                      status: event.target.value
+                    }))
+                  }
+                >
+                  <option>Запланировано</option>
+                  <option>В работе</option>
+                  <option>Готово</option>
+                  <option>Отменено</option>
+                </select>
+              </label>
+              <div className="modal-actions">
+                <button className="primary-btn" type="submit">
+                  {editingCommId ? "Сохранить" : "Добавить"}
+                </button>
+                <button
+                  className="secondary-btn"
+                  type="button"
+                  onClick={() => {
+                    setShowCommModal(false);
+                    setEditingCommId(null);
+                  }}
+                >
+                  Отмена
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {token ? (
+        <>
+          <button
+            className="support-fab"
+            onClick={() => setShowSupportChat((prev) => !prev)}
+            type="button"
+            title="Чат с поддержкой"
+          >
+            <svg
+              width="28"
+              height="28"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+          </button>
+
+          {showSupportChat ? (
+            <div className="support-chat">
+              <div className="support-chat-header">
+                <div>
+                  <strong>Поддержка HR CRM</strong>
+                  <p className="muted">Онлайн</p>
+                </div>
+                <button
+                  className="secondary-btn"
+                  onClick={() => setShowSupportChat(false)}
+                  type="button"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="support-chat-body">
+                {supportMessages.length === 0 ? (
+                  <p className="muted">
+                    Привет! Задайте вопрос и мы поможем вам разобраться.
+                  </p>
+                ) : (
+                  supportMessages.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className={`support-message ${
+                        msg.sender === "user" ? "user" : "support"
+                      }`}
+                    >
+                      <p>{msg.content}</p>
+                      <span className="muted">
+                        {new Date(msg.timestamp).toLocaleTimeString("ru-RU", {
+                          hour: "2-digit",
+                          minute: "2-digit"
+                        })}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+              <form className="support-chat-footer" onSubmit={handleSupportSend}>
+                <input
+                  type="text"
+                  value={supportInput}
+                  onChange={(event) => setSupportInput(event.target.value)}
+                  placeholder="Напишите сообщение..."
+                  disabled={supportLoading}
+                />
+                <button
+                  className="primary-btn"
+                  type="submit"
+                  disabled={supportLoading}
+                >
+                  Отправить
+                </button>
+              </form>
+            </div>
+          ) : null}
+        </>
       ) : null}
     </div>
     </div>

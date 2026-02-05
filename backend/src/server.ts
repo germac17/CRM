@@ -54,6 +54,21 @@ type CalendarEvent = {
   candidateId?: string;
 };
 
+type Communication = {
+  id: string;
+  channel: string;
+  template: string;
+  audience: string;
+  status: string;
+};
+
+type SupportMessage = {
+  id: string;
+  content: string;
+  sender: "user" | "support";
+  timestamp: string;
+};
+
 const dataDir = path.resolve(process.cwd(), "data");
 const usersFile = path.join(dataDir, "users.json");
 
@@ -206,6 +221,12 @@ app.delete("/vacancies/:id", authMiddleware, async (req, res) => {
   const vacancies = await loadUserData<Vacancy>(userId, "vacancies");
   const filtered = vacancies.filter((item) => item.id !== req.params.id);
   await saveUserData(userId, "vacancies", filtered);
+  
+  // Удалить связанные матчи
+  const matches = await loadUserData<Match>(userId, "matches");
+  const filteredMatches = matches.filter((item) => item.vacancyId !== req.params.id);
+  await saveUserData(userId, "matches", filteredMatches);
+  
   res.json({ success: true });
 });
 
@@ -250,6 +271,17 @@ app.delete("/candidates/:id", authMiddleware, async (req, res) => {
   const candidates = await loadUserData<Candidate>(userId, "candidates");
   const filtered = candidates.filter((item) => item.id !== req.params.id);
   await saveUserData(userId, "candidates", filtered);
+  
+  // Удалить связанные матчи
+  const matches = await loadUserData<Match>(userId, "matches");
+  const filteredMatches = matches.filter((item) => item.candidateId !== req.params.id);
+  await saveUserData(userId, "matches", filteredMatches);
+  
+  // Удалить связанные календарные события
+  const events = await loadUserData<CalendarEvent>(userId, "calendar");
+  const filteredEvents = events.filter((item) => item.candidateId !== req.params.id);
+  await saveUserData(userId, "calendar", filteredEvents);
+  
   res.json({ success: true });
 });
 
@@ -306,6 +338,132 @@ app.delete("/calendar/:id", authMiddleware, async (req, res) => {
   const filtered = events.filter((item) => item.id !== req.params.id);
   await saveUserData(userId, "calendar", filtered);
   res.json({ success: true });
+});
+
+app.get("/communications", authMiddleware, async (req, res) => {
+  const userId = (req as any).userId as string;
+  const communications = await loadUserData<Communication>(userId, "communications");
+  res.json({ data: communications });
+});
+
+app.post("/communications", authMiddleware, async (req, res) => {
+  const userId = (req as any).userId as string;
+  const communications = await loadUserData<Communication>(userId, "communications");
+  const newCommunication = {
+    id: `comm-${Date.now()}`,
+    channel: String(req.body.channel ?? "Email"),
+    template: String(req.body.template ?? ""),
+    audience: String(req.body.audience ?? ""),
+    status: String(req.body.status ?? "Запланировано")
+  };
+  communications.push(newCommunication);
+  await saveUserData(userId, "communications", communications);
+  res.json({ data: newCommunication });
+});
+
+app.put("/communications/:id", authMiddleware, async (req, res) => {
+  const userId = (req as any).userId as string;
+  const communications = await loadUserData<Communication>(userId, "communications");
+  const index = communications.findIndex((item) => item.id === req.params.id);
+  if (index === -1) {
+    res.status(404).json({ error: "Коммуникация не найдена." });
+    return;
+  }
+  communications[index] = {
+    ...communications[index],
+    channel: String(req.body.channel ?? communications[index].channel),
+    template: String(req.body.template ?? communications[index].template),
+    audience: String(req.body.audience ?? communications[index].audience),
+    status: String(req.body.status ?? communications[index].status)
+  };
+  await saveUserData(userId, "communications", communications);
+  res.json({ data: communications[index] });
+});
+
+app.delete("/communications/:id", authMiddleware, async (req, res) => {
+  const userId = (req as any).userId as string;
+  const communications = await loadUserData<Communication>(userId, "communications");
+  const filtered = communications.filter((item) => item.id !== req.params.id);
+  await saveUserData(userId, "communications", filtered);
+  res.json({ success: true });
+});
+
+app.get("/support/messages", authMiddleware, async (req, res) => {
+  const userId = (req as any).userId as string;
+  const messages = await loadUserData<SupportMessage>(userId, "support-chat");
+  res.json({ data: messages });
+});
+
+app.post("/support/messages", authMiddleware, async (req, res) => {
+  const userId = (req as any).userId as string;
+  const messages = await loadUserData<SupportMessage>(userId, "support-chat");
+  
+  const userMessage: SupportMessage = {
+    id: `msg-${Date.now()}`,
+    content: String(req.body.content ?? ""),
+    sender: "user",
+    timestamp: new Date().toISOString()
+  };
+  messages.push(userMessage);
+  await saveUserData(userId, "support-chat", messages);
+  
+  res.json({ data: [userMessage] });
+});
+
+app.get("/admin/support-chats", authMiddleware, async (req, res) => {
+  const userEmail = (req as any).userEmail as string;
+  
+  if (userEmail !== "admin@crm.ru") {
+    res.status(403).json({ error: "Доступ запрещен." });
+    return;
+  }
+  
+  const users = await loadUsers();
+  const chats = await Promise.all(
+    users
+      .filter((user) => user.email !== "admin@crm.ru")
+      .map(async (user) => {
+        const messages = await loadUserData<SupportMessage>(user.id, "support-chat");
+        return {
+          userId: user.id,
+          userName: user.name,
+          userEmail: user.email,
+          messages,
+          lastMessage: messages[messages.length - 1]
+        };
+      })
+  );
+  
+  res.json({ data: chats.filter((chat) => chat.messages.length > 0) });
+});
+
+app.post("/admin/support-reply", authMiddleware, async (req, res) => {
+  const userEmail = (req as any).userEmail as string;
+  
+  if (userEmail !== "admin@crm.ru") {
+    res.status(403).json({ error: "Доступ запрещен." });
+    return;
+  }
+  
+  const targetUserId = String(req.body.userId ?? "");
+  const content = String(req.body.content ?? "");
+  
+  if (!targetUserId || !content) {
+    res.status(400).json({ error: "Укажите userId и content." });
+    return;
+  }
+  
+  const messages = await loadUserData<SupportMessage>(targetUserId, "support-chat");
+  const supportMessage: SupportMessage = {
+    id: `msg-${Date.now()}`,
+    content,
+    sender: "support",
+    timestamp: new Date().toISOString()
+  };
+  messages.push(supportMessage);
+  await saveUserData(targetUserId, "support-chat", messages);
+  
+  res.json({ data: supportMessage });
 });
 
 app.post("/auth/register", async (req, res) => {
