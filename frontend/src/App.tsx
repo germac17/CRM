@@ -21,6 +21,42 @@ type Match = {
   score: number;
   explanation: string;
   vacancyId: string;
+  category?: string;
+  details?: {
+    skills_match?: {
+      matched: number;
+      required: number;
+      score: number;
+    };
+    semantic_similarity?: number;
+    experience_match?: number;
+    education_match?: boolean;
+    nice_to_have_bonus?: number;
+  };
+  confidence?: number;
+  needs_review?: boolean;
+};
+
+type AIMatchResult = {
+  candidate_id: string;
+  vacancy_id: string;
+  score: number;
+  category: string;
+  explanation: string;
+  details: {
+    skills_match: {
+      matched: number;
+      required: number;
+      missing: string[];
+      score: number;
+    };
+    semantic_similarity: number;
+    experience_match: number;
+    education_match: boolean;
+    nice_to_have_bonus: number;
+  };
+  confidence: number;
+  needs_review: boolean;
 };
  
 type AuthUser = {
@@ -199,6 +235,13 @@ export default function App() {
     score: "0.8",
     explanation: ""
   });
+  const [selectedVacancyForMatching, setSelectedVacancyForMatching] = useState<string>("");
+  const [aiMatchingLoading, setAiMatchingLoading] = useState(false);
+  const [aiMatchingError, setAiMatchingError] = useState<string | null>(null);
+  const [aiMatches, setAiMatches] = useState<AIMatchResult[]>([]);
+  const [showAIMatchDetails, setShowAIMatchDetails] = useState<string | null>(null);
+  const [showFullReport, setShowFullReport] = useState(false);
+  const [reportFilter, setReportFilter] = useState<"all" | "suitable" | "conditional" | "unsuitable">("all");
   const [editingCandidateId, setEditingCandidateId] = useState<string | null>(
     null
   );
@@ -1665,132 +1708,423 @@ export default function App() {
       {activeTab === "matching" ? (
         <section className="grid">
           <div className="card">
-            <h3>Граф навыков и поиск</h3>
-            <p className="muted">
-              Нормализация навыков, семантический поиск и объяснимые совпадения.
-            </p>
-            <div className="timeline">
+            <div className="ai-header">
               <div>
-                <strong>Узлы навыков</strong>
-                <p className="muted">1 240 активных навыков</p>
+                <h3>🤖 Автоматический ИИ-матчинг</h3>
+                <p className="muted">
+                  Выберите вакансию и запустите автоматический анализ всех кандидатов. 
+                  Система оценит каждого по 10-бальной шкале и отсортирует по категориям.
+                </p>
               </div>
-              <div>
-                <strong>Смещения</strong>
-                <p className="muted">Контроль fairness и прозрачность</p>
-              </div>
+              {aiMatches.length > 0 ? (
+                <button
+                  className="primary-btn"
+                  onClick={() => setShowFullReport(true)}
+                >
+                  📋 Полный отчет
+                </button>
+              ) : null}
             </div>
-          </div>
-          <div className="card">
-            <h3>Рекомендации кандидатов</h3>
-            {loading ? (
-              <p className="muted">Загрузка матчей...</p>
-            ) : (
-              <>
-                <ul className="recommendations">
-                  {recommendationCards.map((rec) => (
-                    <li key={`${rec.name}-${rec.role}`}>
-                      <div>
-                        <strong>{rec.name}</strong>
-                        <span className="muted">{rec.role}</span>
-                        <p className="muted">{rec.explanation}</p>
-                      </div>
-                      <span className="score">
-                        {Math.round(rec.score * 100)}%
-                      </span>
-                    </li>
+            
+            <div className="form-grid">
+              <label className="field">
+                Вакансия для анализа
+                <select
+                  value={selectedVacancyForMatching}
+                  onChange={(event) => setSelectedVacancyForMatching(event.target.value)}
+                >
+                  <option value="">Выберите вакансию</option>
+                  {vacancies.map((vacancy) => (
+                    <option key={vacancy.id} value={vacancy.id}>
+                      {vacancy.title} · {vacancy.department}
+                    </option>
                   ))}
-                </ul>
-                <form className="form-grid" onSubmit={handleMatchAdd}>
-                  <label className="field">
-                    Кандидат
-                    <select
-                      value={matchingForm.candidateId}
-                      onChange={(event) =>
-                        setMatchingForm((prev) => ({
-                          ...prev,
-                          candidateId: event.target.value
-                        }))
+                </select>
+              </label>
+              <button
+                className="primary-btn"
+                style={{height: "fit-content", marginTop: "auto"}}
+                onClick={async () => {
+                  if (!selectedVacancyForMatching) {
+                    setAiMatchingError("Выберите вакансию");
+                    return;
+                  }
+                  
+                  setAiMatchingLoading(true);
+                  setAiMatchingError(null);
+                  const aiApiBase = import.meta.env.VITE_AI_URL ?? "http://localhost:8001";
+                  
+                  try {
+                    const response = await fetch(`${aiApiBase}/api/match/batch`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        vacancy_id: selectedVacancyForMatching,
+                        auto_save: false
+                      })
+                    });
+                    
+                    if (!response.ok) {
+                      throw new Error(`AI сервис вернул ошибку: ${response.status}`);
+                    }
+                    
+                    const data = await response.json();
+                    setAiMatches(data.matches || []);
+                    
+                    if (data.matches && data.matches.length > 0) {
+                      const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+                      const savePromises = data.matches
+                        .filter((m: AIMatchResult) => m.score >= 4.0)
+                        .map((m: AIMatchResult) =>
+                          fetch(`${apiBase}/matches`, {
+                            method: "POST",
+                            headers: {
+                              Authorization: `Bearer ${token}`,
+                              "Content-Type": "application/json"
+                            },
+                            body: JSON.stringify({
+                              candidateId: m.candidate_id,
+                              vacancyId: m.vacancy_id,
+                              score: m.score / 10,
+                              explanation: m.explanation
+                            })
+                          })
+                        );
+                      
+                      await Promise.all(savePromises);
+                      
+                      const matchRes = await fetch(`${apiBase}/matches`, {
+                        headers: { Authorization: `Bearer ${token}` }
+                      });
+                      if (matchRes.ok) {
+                        const matchJson = await matchRes.json();
+                        setMatches(matchJson.data);
                       }
-                      required
+                    }
+                  } catch (err) {
+                    const message = err instanceof Error ? err.message : "Ошибка AI-сервиса";
+                    setAiMatchingError(message);
+                  } finally {
+                    setAiMatchingLoading(false);
+                  }
+                }}
+                disabled={aiMatchingLoading || !selectedVacancyForMatching}
+              >
+                {aiMatchingLoading ? "⏳ Анализ кандидатов..." : "🚀 Запустить AI-анализ"}
+              </button>
+            </div>
+            
+            {aiMatchingError ? (
+              <div className="error-banner">
+                ⚠️ {aiMatchingError}
+                <div className="muted">
+                  Убедитесь, что AI-сервис запущен: cd ai && python app.py
+                </div>
+              </div>
+            ) : null}
+            
+            {aiMatches.length > 0 ? (
+              <div className="ai-summary-enhanced">
+                <div className="summary-header">
+                  <h4>📊 Результаты анализа</h4>
+                  <div className="summary-actions">
+                    <button
+                      className="export-btn"
+                      onClick={() => {
+                        const selectedVacancy = vacancies.find(v => v.id === selectedVacancyForMatching);
+                        const csvContent = [
+                          "Кандидат,Роль,Оценка,Категория,Навыки (совп/треб),Семантика,Опыт,Объяснение",
+                          ...aiMatches.map(m => {
+                            const cand = candidates.find(c => c.id === m.candidate_id);
+                            return `"${cand?.name || m.candidate_id}","${cand?.role || '-'}",${m.score},"${m.category}","${m.details.skills_match.matched}/${m.details.skills_match.required}",${Math.round(m.details.semantic_similarity * 100)}%,${Math.round(m.details.experience_match * 100)}%,"${m.explanation.replace(/"/g, '""')}"`;
+                          })
+                        ].join('\n');
+                        
+                        const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+                        const link = document.createElement('a');
+                        link.href = URL.createObjectURL(blob);
+                        link.download = `AI_Match_Report_${selectedVacancy?.title.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`;
+                        link.click();
+                      }}
                     >
-                      <option value="">Выберите кандидата</option>
-                      {candidates.map((candidate) => (
-                        <option key={candidate.id} value={candidate.id}>
-                          {candidate.name} · {candidate.role}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="field">
-                    Оценка
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      max="1"
-                      value={matchingForm.score}
-                      onChange={(event) =>
-                        setMatchingForm((prev) => ({
-                          ...prev,
-                          score: event.target.value
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className="field">
-                    Объяснение
-                    <input
-                      type="text"
-                      value={matchingForm.explanation}
-                      onChange={(event) =>
-                        setMatchingForm((prev) => ({
-                          ...prev,
-                          explanation: event.target.value
-                        }))
-                      }
-                      placeholder="Почему кандидат подходит"
-                    />
-                  </label>
-                  <div className="modal-actions">
-                    <button className="primary-btn" type="submit">
-                      Добавить матчинг
+                      📥 Экспорт CSV
                     </button>
                   </div>
-                </form>
-                <div className="table">
-                  <div className="table-header">
-                    <span>Кандидат</span>
-                    <span>Оценка</span>
-                    <span>Действия</span>
-                  </div>
-                  {matches.map((match) => {
-                    const candidate = candidates.find(
-                      (item) => item.id === match.candidateId
-                    );
-                    return (
-                      <div className="table-row" key={match.candidateId}>
-                        <span>
-                          {candidate?.name ?? match.candidateId}
-                          <span className="muted">
-                            {" "}
-                            · {candidate?.role ?? "Кандидат"}
-                          </span>
-                        </span>
-                        <span>{Math.round(match.score * 100)}%</span>
-                        <button
-                          className="danger-btn"
-                          type="button"
-                          onClick={() => handleMatchDelete(match.candidateId)}
-                        >
-                          Удалить
-                        </button>
-                      </div>
-                    );
-                  })}
                 </div>
-              </>
-            )}
+                
+                <div className="kpi-grid-enhanced">
+                  <div className="stat-card total">
+                    <div className="stat-icon">📊</div>
+                    <div className="stat-content">
+                      <span className="stat-label">Всего проанализировано</span>
+                      <span className="stat-value">{aiMatches.length}</span>
+                    </div>
+                  </div>
+                  
+                  <div className="stat-card suitable">
+                    <div className="stat-icon">🟢</div>
+                    <div className="stat-content">
+                      <span className="stat-label">Подходящие (7-10)</span>
+                      <span className="stat-value">{aiMatches.filter(m => m.score >= 7).length}</span>
+                      <span className="stat-percent">
+                        {aiMatches.length > 0 ? Math.round((aiMatches.filter(m => m.score >= 7).length / aiMatches.length) * 100) : 0}%
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="stat-card conditional">
+                    <div className="stat-icon">🟡</div>
+                    <div className="stat-content">
+                      <span className="stat-label">Условно подходящие (4-6)</span>
+                      <span className="stat-value">{aiMatches.filter(m => m.score >= 4 && m.score < 7).length}</span>
+                      <span className="stat-percent">
+                        {aiMatches.length > 0 ? Math.round((aiMatches.filter(m => m.score >= 4 && m.score < 7).length / aiMatches.length) * 100) : 0}%
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="stat-card unsuitable">
+                    <div className="stat-icon">🔴</div>
+                    <div className="stat-content">
+                      <span className="stat-label">Не подходящие (1-3)</span>
+                      <span className="stat-value">{aiMatches.filter(m => m.score < 4).length}</span>
+                      <span className="stat-percent">
+                        {aiMatches.length > 0 ? Math.round((aiMatches.filter(m => m.score < 4).length / aiMatches.length) * 100) : 0}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                
+                {aiMatches.filter(m => m.needs_review).length > 0 ? (
+                  <div className="warning-banner">
+                    ⚠️ <strong>{aiMatches.filter(m => m.needs_review).length} кандидатов</strong> требуют дополнительной проверки HR-специалистом
+                  </div>
+                ) : null}
+                
+                <div className="ai-insights">
+                  <h5>💡 Рекомендации:</h5>
+                  <ul>
+                    {aiMatches.filter(m => m.score >= 7).length > 0 ? (
+                      <li>✅ Приглашайте на собеседование {aiMatches.filter(m => m.score >= 7).length} лучших кандидатов</li>
+                    ) : (
+                      <li>⚠️ Идеальных кандидатов не найдено. Рассмотрите условно подходящих.</li>
+                    )}
+                    {aiMatches.filter(m => m.score >= 7).length > 0 ? (
+                      <li>
+                        🏆 Топ кандидат: {(() => {
+                          const topMatch = aiMatches.reduce((prev, curr) => prev.score > curr.score ? prev : curr);
+                          const topCand = candidates.find(c => c.id === topMatch.candidate_id);
+                          return `${topCand?.name || 'N/A'} (${topMatch.score.toFixed(1)}/10)`;
+                        })()}
+                      </li>
+                    ) : null}
+                    <li>
+                      📊 Средняя оценка: {(aiMatches.reduce((sum, m) => sum + m.score, 0) / aiMatches.length).toFixed(1)}/10
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            ) : null}
           </div>
+          
+          {aiMatches.length > 0 ? (
+            <>
+              <div className="card">
+                <h3>🟢 Подходящие кандидаты (7-10 баллов)</h3>
+                <p className="muted">Рекомендуются к приглашению на собеседование</p>
+                {aiMatches.filter(m => m.score >= 7).length === 0 ? (
+                  <p className="muted">Кандидатов в этой категории нет</p>
+                ) : (
+                  <ul className="ai-match-list">
+                    {aiMatches
+                      .filter(m => m.score >= 7)
+                      .map((match) => {
+                        const candidate = candidates.find(c => c.id === match.candidate_id);
+                        return (
+                          <li key={match.candidate_id} className="ai-match-item suitable">
+                            <div className="match-header">
+                              <div>
+                                <strong>{candidate?.name ?? "Кандидат"}</strong>
+                                <span className="muted"> · {candidate?.role ?? "Роль не указана"}</span>
+                              </div>
+                              <div className="match-score-badge suitable">
+                                {match.score.toFixed(1)}/10
+                              </div>
+                            </div>
+                            <div className="match-details">
+                              <div className="detail-row">
+                                <span>🎯 Навыки:</span>
+                                <span>
+                                  {match.details.skills_match.matched}/{match.details.skills_match.required}
+                                  {match.details.skills_match.matched >= match.details.skills_match.required ? " ✓" : ""}
+                                </span>
+                              </div>
+                              <div className="detail-row">
+                                <span>🧠 Семантика:</span>
+                                <span>{Math.round(match.details.semantic_similarity * 100)}%</span>
+                              </div>
+                              <div className="detail-row">
+                                <span>💼 Опыт:</span>
+                                <span>{Math.round(match.details.experience_match * 100)}%</span>
+                              </div>
+                              <div className="detail-row">
+                                <span>🎓 Образование:</span>
+                                <span>{match.details.education_match ? "✓ Да" : "✗ Нет"}</span>
+                              </div>
+                            </div>
+                            <p className="match-explanation">{match.explanation}</p>
+                            {match.needs_review ? (
+                              <span className="review-badge">⚠️ Требует проверки HR</span>
+                            ) : null}
+                            <button
+                              className="secondary-btn"
+                              onClick={() => 
+                                setShowAIMatchDetails(
+                                  showAIMatchDetails === match.candidate_id ? null : match.candidate_id
+                                )
+                              }
+                            >
+                              {showAIMatchDetails === match.candidate_id ? "Скрыть детали" : "Показать детали"}
+                            </button>
+                            {showAIMatchDetails === match.candidate_id ? (
+                              <div className="extended-details">
+                                <h5>Подробная разбивка:</h5>
+                                <div className="detail-grid">
+                                  <div>
+                                    <strong>Совпавшие навыки:</strong>
+                                    <p className="muted">{match.details.skills_match.matched} из {match.details.skills_match.required}</p>
+                                  </div>
+                                  {match.details.skills_match.missing && match.details.skills_match.missing.length > 0 ? (
+                                    <div>
+                                      <strong>Отсутствуют:</strong>
+                                      <p className="muted">{match.details.skills_match.missing.join(", ")}</p>
+                                    </div>
+                                  ) : null}
+                                  <div>
+                                    <strong>Уверенность модели:</strong>
+                                    <p className="muted">{Math.round(match.confidence * 100)}%</p>
+                                  </div>
+                                  {match.details.nice_to_have_bonus > 0 ? (
+                                    <div>
+                                      <strong>Бонус (nice-to-have):</strong>
+                                      <p className="muted">+{match.details.nice_to_have_bonus.toFixed(1)} балла</p>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                  </ul>
+                )}
+              </div>
+              
+              <div className="card">
+                <h3>🟡 Условно подходящие (4-6 баллов)</h3>
+                <p className="muted">Рассматриваются при отсутствии лучших кандидатов</p>
+                {aiMatches.filter(m => m.score >= 4 && m.score < 7).length === 0 ? (
+                  <p className="muted">Кандидатов в этой категории нет</p>
+                ) : (
+                  <ul className="ai-match-list">
+                    {aiMatches
+                      .filter(m => m.score >= 4 && m.score < 7)
+                      .map((match) => {
+                        const candidate = candidates.find(c => c.id === match.candidate_id);
+                        return (
+                          <li key={match.candidate_id} className="ai-match-item conditional">
+                            <div className="match-header">
+                              <div>
+                                <strong>{candidate?.name ?? "Кандидат"}</strong>
+                                <span className="muted"> · {candidate?.role ?? "Роль не указана"}</span>
+                              </div>
+                              <div className="match-score-badge conditional">
+                                {match.score.toFixed(1)}/10
+                              </div>
+                            </div>
+                            <div className="match-details">
+                              <div className="detail-row">
+                                <span>🎯 Навыки:</span>
+                                <span>{match.details.skills_match.matched}/{match.details.skills_match.required}</span>
+                              </div>
+                              <div className="detail-row">
+                                <span>🧠 Семантика:</span>
+                                <span>{Math.round(match.details.semantic_similarity * 100)}%</span>
+                              </div>
+                            </div>
+                            <p className="match-explanation">{match.explanation}</p>
+                            {match.needs_review ? (
+                              <span className="review-badge">⚠️ Требует проверки HR</span>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                  </ul>
+                )}
+              </div>
+              
+              <div className="card">
+                <h3>🔴 Не подходящие (1-3 балла)</h3>
+                <p className="muted">Не соответствуют требованиям вакансии</p>
+                {aiMatches.filter(m => m.score < 4).length === 0 ? (
+                  <p className="muted">Кандидатов в этой категории нет</p>
+                ) : (
+                  <ul className="ai-match-list">
+                    {aiMatches
+                      .filter(m => m.score < 4)
+                      .slice(0, 5)
+                      .map((match) => {
+                        const candidate = candidates.find(c => c.id === match.candidate_id);
+                        return (
+                          <li key={match.candidate_id} className="ai-match-item unsuitable">
+                            <div className="match-header">
+                              <div>
+                                <strong>{candidate?.name ?? "Кандидат"}</strong>
+                                <span className="muted"> · {candidate?.role ?? "Роль не указана"}</span>
+                              </div>
+                              <div className="match-score-badge unsuitable">
+                                {match.score.toFixed(1)}/10
+                              </div>
+                            </div>
+                            <p className="match-explanation">{match.explanation}</p>
+                          </li>
+                        );
+                      })}
+                    {aiMatches.filter(m => m.score < 4).length > 5 ? (
+                      <li className="muted">
+                        ... и еще {aiMatches.filter(m => m.score < 4).length - 5} кандидатов
+                      </li>
+                    ) : null}
+                  </ul>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="card">
+              <h3>Граф навыков и поиск</h3>
+              <p className="muted">
+                Нормализация навыков, семантический поиск и объяснимые совпадения.
+              </p>
+              <div className="timeline">
+                <div>
+                  <strong>Узлы навыков</strong>
+                  <p className="muted">100+ синонимов навыков</p>
+                </div>
+                <div>
+                  <strong>ML алгоритмы</strong>
+                  <p className="muted">TF-IDF + BERT embeddings</p>
+                </div>
+                <div>
+                  <strong>Прозрачность</strong>
+                  <p className="muted">Объяснение каждой оценки</p>
+                </div>
+              </div>
+              
+              <div className="info-banner">
+                ℹ️ Выберите вакансию выше и нажмите "Запустить AI-анализ" для автоматического подбора кандидатов
+              </div>
+            </div>
+          )}
         </section>
       ) : null}
  
@@ -2430,6 +2764,181 @@ export default function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      ) : null}
+
+      {showFullReport && aiMatches.length > 0 ? (
+        <div className="modal-backdrop">
+          <div className="modal modal-wide">
+            <div className="modal-header">
+              <div>
+                <h3>📋 Полный отчет по AI-матчингу</h3>
+                <p className="muted">
+                  Вакансия: {vacancies.find(v => v.id === selectedVacancyForMatching)?.title || 'N/A'}
+                </p>
+              </div>
+              <button
+                className="secondary-btn"
+                onClick={() => setShowFullReport(false)}
+                type="button"
+              >
+                Закрыть
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="report-filters">
+                <button
+                  className={`filter-chip ${reportFilter === "all" ? "active" : ""}`}
+                  onClick={() => setReportFilter("all")}
+                >
+                  Все ({aiMatches.length})
+                </button>
+                <button
+                  className={`filter-chip ${reportFilter === "suitable" ? "active" : ""}`}
+                  onClick={() => setReportFilter("suitable")}
+                >
+                  🟢 Подходящие ({aiMatches.filter(m => m.score >= 7).length})
+                </button>
+                <button
+                  className={`filter-chip ${reportFilter === "conditional" ? "active" : ""}`}
+                  onClick={() => setReportFilter("conditional")}
+                >
+                  🟡 Условно ({aiMatches.filter(m => m.score >= 4 && m.score < 7).length})
+                </button>
+                <button
+                  className={`filter-chip ${reportFilter === "unsuitable" ? "active" : ""}`}
+                  onClick={() => setReportFilter("unsuitable")}
+                >
+                  🔴 Не подходят ({aiMatches.filter(m => m.score < 4).length})
+                </button>
+              </div>
+              
+              <div className="report-table">
+                <div className="report-table-header">
+                  <span style={{flex: 2}}>Кандидат</span>
+                  <span style={{flex: 1, textAlign: "center"}}>Оценка</span>
+                  <span style={{flex: 1, textAlign: "center"}}>Навыки</span>
+                  <span style={{flex: 1, textAlign: "center"}}>Семантика</span>
+                  <span style={{flex: 1, textAlign: "center"}}>Опыт</span>
+                  <span style={{flex: 1, textAlign: "center"}}>Образование</span>
+                  <span style={{flex: 2}}>Статус</span>
+                </div>
+                {aiMatches
+                  .filter(m => {
+                    if (reportFilter === "suitable") return m.score >= 7;
+                    if (reportFilter === "conditional") return m.score >= 4 && m.score < 7;
+                    if (reportFilter === "unsuitable") return m.score < 4;
+                    return true;
+                  })
+                  .map((match, index) => {
+                    const candidate = candidates.find(c => c.id === match.candidate_id);
+                    const categoryClass = 
+                      match.score >= 7 ? "suitable" : 
+                      match.score >= 4 ? "conditional" : 
+                      "unsuitable";
+                    
+                    return (
+                      <div key={match.candidate_id} className={`report-table-row ${categoryClass}`}>
+                        <div style={{flex: 2}}>
+                          <div className="report-candidate">
+                            <span className="report-rank">#{index + 1}</span>
+                            <div>
+                              <strong>{candidate?.name || match.candidate_id}</strong>
+                              <span className="muted">{candidate?.role || '-'}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div style={{flex: 1, textAlign: "center"}}>
+                          <span className={`score-badge ${categoryClass}`}>
+                            {match.score.toFixed(1)}
+                          </span>
+                        </div>
+                        <div style={{flex: 1, textAlign: "center"}}>
+                          <span className="metric-value">
+                            {match.details.skills_match.matched}/{match.details.skills_match.required}
+                            {match.details.skills_match.matched >= match.details.skills_match.required ? " ✓" : ""}
+                          </span>
+                        </div>
+                        <div style={{flex: 1, textAlign: "center"}}>
+                          <span className="metric-value">
+                            {Math.round(match.details.semantic_similarity * 100)}%
+                          </span>
+                        </div>
+                        <div style={{flex: 1, textAlign: "center"}}>
+                          <span className="metric-value">
+                            {Math.round(match.details.experience_match * 100)}%
+                          </span>
+                        </div>
+                        <div style={{flex: 1, textAlign: "center"}}>
+                          <span className="metric-value">
+                            {match.details.education_match ? "✓" : "✗"}
+                          </span>
+                        </div>
+                        <div style={{flex: 2}}>
+                          <div className="report-actions">
+                            <span className={`category-pill ${categoryClass}`}>
+                              {match.category}
+                            </span>
+                            {match.needs_review ? (
+                              <span className="needs-review-pill">
+                                ⚠️ Проверить
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+              
+              <div className="report-footer">
+                <div className="report-stats">
+                  <div>
+                    <strong>Средняя оценка:</strong>
+                    <span> {(aiMatches.reduce((sum, m) => sum + m.score, 0) / aiMatches.length).toFixed(1)}/10</span>
+                  </div>
+                  <div>
+                    <strong>Уверенность модели:</strong>
+                    <span> {Math.round((aiMatches.reduce((sum, m) => sum + m.confidence, 0) / aiMatches.length) * 100)}%</span>
+                  </div>
+                  <div>
+                    <strong>Требуют проверки:</strong>
+                    <span> {aiMatches.filter(m => m.needs_review).length}</span>
+                  </div>
+                </div>
+                
+                <div className="modal-actions">
+                  <button
+                    className="primary-btn"
+                    onClick={() => {
+                      const selectedVacancy = vacancies.find(v => v.id === selectedVacancyForMatching);
+                      const csvContent = [
+                        "№,Кандидат,Роль,Оценка,Категория,Навыки (совп/треб),Семантика %,Опыт %,Образование,Уверенность %,Требует проверки,Объяснение",
+                        ...aiMatches.map((m, i) => {
+                          const cand = candidates.find(c => c.id === m.candidate_id);
+                          return `${i+1},"${cand?.name || m.candidate_id}","${cand?.role || '-'}",${m.score},"${m.category}","${m.details.skills_match.matched}/${m.details.skills_match.required}",${Math.round(m.details.semantic_similarity * 100)},${Math.round(m.details.experience_match * 100)},${m.details.education_match ? 'Да' : 'Нет'},${Math.round(m.confidence * 100)},${m.needs_review ? 'Да' : 'Нет'},"${m.explanation.replace(/"/g, '""')}"`;
+                        })
+                      ].join('\n');
+                      
+                      const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+                      const link = document.createElement('a');
+                      link.href = URL.createObjectURL(blob);
+                      link.download = `AI_Match_Report_${selectedVacancy?.title.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`;
+                      link.click();
+                    }}
+                  >
+                    📥 Скачать полный отчет (CSV)
+                  </button>
+                  <button
+                    className="secondary-btn"
+                    onClick={() => setShowFullReport(false)}
+                  >
+                    Закрыть
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       ) : null}

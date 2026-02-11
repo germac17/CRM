@@ -502,7 +502,7 @@ app.post("/auth/login", async (req, res) => {
     res.status(400).json({ error: "Введите email и пароль." });
     return;
   }
- 
+
   const users = await loadUsers();
   const normalizedEmail = String(email).trim().toLowerCase();
   const user = users.find(
@@ -512,11 +512,116 @@ app.post("/auth/login", async (req, res) => {
     res.status(401).json({ error: "Неверный email или пароль." });
     return;
   }
- 
+
   res.json({
     token: createToken(user.email),
     user: { id: user.id, name: user.name, email: user.email }
   });
+});
+
+// ============================================================================
+// AI Matching Integration
+// ============================================================================
+
+app.post("/ai/match/batch", authMiddleware, async (req, res) => {
+  const userId = (req as any).userId as string;
+  const { vacancy_id, auto_save } = req.body;
+  
+  if (!vacancy_id) {
+    res.status(400).json({ error: "Укажите vacancy_id" });
+    return;
+  }
+  
+  const aiServiceUrl = process.env.AI_SERVICE_URL ?? "http://localhost:8001";
+  
+  try {
+    // Проксируем запрос к AI-сервису
+    const aiResponse = await fetch(`${aiServiceUrl}/api/match/batch`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        vacancy_id,
+        auto_save: false  // Сохраняем сами
+      })
+    });
+    
+    if (!aiResponse.ok) {
+      throw new Error(`AI-сервис вернул ошибку: ${aiResponse.status}`);
+    }
+    
+    const aiData = await aiResponse.json();
+    
+    // Если требуется сохранить результаты
+    if (auto_save && aiData.matches) {
+      const matches = await loadUserData<Match>(userId, "matches");
+      
+      // Удаляем старые матчи для этой вакансии
+      const filtered = matches.filter((m) => m.vacancyId !== vacancy_id);
+      
+      // Добавляем новые матчи (только подходящие и условно подходящие)
+      for (const aiMatch of aiData.matches) {
+        if (aiMatch.score >= 4.0) {  // Только 4+ баллов
+          filtered.push({
+            candidateId: aiMatch.candidate_id,
+            vacancyId: aiMatch.vacancy_id,
+            score: aiMatch.score / 10,  // Конвертируем 1-10 в 0-1
+            explanation: aiMatch.explanation,
+            category: aiMatch.category,
+            details: aiMatch.details
+          });
+        }
+      }
+      
+      await saveUserData(userId, "matches", filtered);
+    }
+    
+    res.json(aiData);
+  } catch (error) {
+    console.error("Ошибка AI-матчинга:", error);
+    res.status(500).json({
+      error: "Не удалось выполнить AI-матчинг",
+      details: error instanceof Error ? error.message : String(error)
+    });
+  }
+});
+
+app.post("/ai/match/analyze", authMiddleware, async (req, res) => {
+  const { vacancy_id, candidate_id } = req.body;
+  
+  if (!vacancy_id || !candidate_id) {
+    res.status(400).json({ error: "Укажите vacancy_id и candidate_id" });
+    return;
+  }
+  
+  const aiServiceUrl = process.env.AI_SERVICE_URL ?? "http://localhost:8001";
+  
+  try {
+    const aiResponse = await fetch(`${aiServiceUrl}/api/match/analyze`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        vacancy_id,
+        candidate_id
+      })
+    });
+    
+    if (!aiResponse.ok) {
+      throw new Error(`AI-сервис вернул ошибку: ${aiResponse.status}`);
+    }
+    
+    const aiData = await aiResponse.json();
+    res.json(aiData);
+  } catch (error) {
+    console.error("Ошибка AI-анализа:", error);
+    res.status(500).json({
+      error: "Не удалось выполнить AI-анализ",
+      details: error instanceof Error ? error.message : String(error)
+    });
+  }
 });
  
 ensureAdminUser()
