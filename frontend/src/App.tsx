@@ -124,39 +124,6 @@ const getTabFromHash = () => {
  
  
  
-const analyticsCharts = [
-  {
-    id: "time-to-hire",
-    title: "Срок закрытия вакансий (дни)",
-    data: [
-      { label: "Продукт", value: 24 },
-      { label: "Аналитика", value: 31 },
-      { label: "AI/ML", value: 28 },
-      { label: "HR", value: 18 }
-    ]
-  },
-  {
-    id: "source-quality",
-    title: "Эффективность источников (%)",
-    data: [
-      { label: "HH.ru", value: 42 },
-      { label: "LinkedIn", value: 28 },
-      { label: "Рефералы", value: 55 },
-      { label: "Сайт", value: 21 }
-    ]
-  },
-  {
-    id: "stage-conversion",
-    title: "Конверсия по этапам (%)",
-    data: [
-      { label: "Скрининг", value: 65 },
-      { label: "Интервью", value: 48 },
-      { label: "Оффер", value: 32 },
-      { label: "Найм", value: 18 }
-    ]
-  }
-];
- 
 const integrations = [
   { name: "HH.ru", status: "Подключено" },
   { name: "LinkedIn", status: "Подключено" },
@@ -412,6 +379,95 @@ export default function App() {
       value
     }));
   }, [candidates]);
+
+  const departmentOptions = useMemo(() => {
+    const deps = new Set(vacancies.map((v) => v.department).filter(Boolean));
+    return ["Все отделы", ...Array.from(deps).sort()];
+  }, [vacancies]);
+
+  const filteredVacancies = useMemo(() => {
+    if (analyticsFilters.department === "Все отделы") return vacancies;
+    return vacancies.filter((v) => v.department === analyticsFilters.department);
+  }, [vacancies, analyticsFilters.department]);
+
+  const filteredCandidates = useMemo(() => {
+    if (analyticsFilters.department === "Все отделы") return candidates;
+    const vacancyIds = new Set(filteredVacancies.map((v) => v.id));
+    const matchedCandidateIds = new Set(
+      matches.filter((m) => vacancyIds.has(m.vacancyId)).map((m) => m.candidateId)
+    );
+    return candidates.filter((c) => matchedCandidateIds.has(c.id));
+  }, [candidates, filteredVacancies, matches, analyticsFilters.department]);
+
+  const analyticsKpis = useMemo(() => {
+    const openVacancies = filteredVacancies.filter((v) =>
+      v.status.toLowerCase().includes("open")
+    ).length;
+    const matchedInFiltered = new Set(
+      matches.filter((m) =>
+        filteredVacancies.some((v) => v.id === m.vacancyId)
+      ).map((m) => m.candidateId)
+    ).size;
+    return [
+      { label: "Открытые вакансии", value: String(openVacancies) },
+      { label: "Кандидаты в воронке", value: String(filteredCandidates.length) },
+      { label: "ИИ матчинги", value: String(matchedInFiltered) },
+      { label: "Всего вакансий", value: String(filteredVacancies.length) }
+    ];
+  }, [filteredVacancies, filteredCandidates, matches]);
+
+  const analyticsStages = useMemo(() => {
+    const base = new Map<string, number>();
+    stageOrder.forEach((stage) => base.set(stage, 0));
+    filteredCandidates.forEach((c) => {
+      if (base.has(c.stage)) base.set(c.stage, (base.get(c.stage) ?? 0) + 1);
+    });
+    return Array.from(base.entries()).map(([label, value]) => ({ label, value }));
+  }, [filteredCandidates]);
+
+  const analyticsChartData = useMemo(() => {
+    const vacByDept = new Map<string, number>();
+    filteredVacancies.forEach((v) => {
+      vacByDept.set(v.department, (vacByDept.get(v.department) ?? 0) + 1);
+    });
+    const vacanciesByDept = Array.from(vacByDept.entries())
+      .map(([label, value]) => ({ label, value }))
+      .sort((a, b) => b.value - a.value);
+
+    const roleCount = new Map<string, number>();
+    filteredCandidates.forEach((c) => {
+      const role = c.role || "Без роли";
+      roleCount.set(role, (roleCount.get(role) ?? 0) + 1);
+    });
+    const totalByRole = filteredCandidates.length;
+    const candidatesByRole = Array.from(roleCount.entries())
+      .map(([label, value]) => ({
+        label,
+        value: totalByRole > 0 ? Math.round((value / totalByRole) * 100) : 0
+      }))
+      .sort((a, b) => b.value - a.value);
+
+    const stageCount = new Map<string, number>();
+    stageOrder.forEach((s) => stageCount.set(s, 0));
+    filteredCandidates.forEach((c) => {
+      if (stageCount.has(c.stage)) {
+        stageCount.set(c.stage, (stageCount.get(c.stage) ?? 0) + 1);
+      }
+    });
+    const totalByStage = filteredCandidates.length;
+    const conversionByStage = Array.from(stageCount.entries())
+      .map(([label, value]) => ({
+        label,
+        value: totalByStage > 0 ? Math.round((value / totalByStage) * 100) : 0
+      }))
+      .filter((item) => item.label);
+
+    return {
+      "time-to-hire": { title: "Вакансии по отделам", data: vacanciesByDept, isPercent: false },
+      "source-quality": { title: "Кандидаты по ролям (%)", data: candidatesByRole, isPercent: true },
+      "stage-conversion": { title: "Конверсия по этапам (%)", data: conversionByStage, isPercent: true }
+    };
+  }, [filteredVacancies, filteredCandidates]);
  
   const recommendationCards = useMemo(() => {
     return matches.map((match) => {
@@ -1452,7 +1508,7 @@ export default function App() {
                         onClick={() => handleAddCandidateToCalendar(candidate.id)}
                         title="Добавить в календарь"
                       >
-                        📅
+                        В календарь
                       </button>
                       <button
                         className="secondary-btn"
@@ -1710,7 +1766,7 @@ export default function App() {
           <div className="card">
             <div className="ai-header">
               <div>
-                <h3>🤖 Автоматический ИИ-матчинг</h3>
+                <h3>Автоматический ИИ-матчинг</h3>
                 <p className="muted">
                   Выберите вакансию и запустите автоматический анализ всех кандидатов. 
                   Система оценит каждого по 10-бальной шкале и отсортирует по категориям.
@@ -1721,7 +1777,7 @@ export default function App() {
                   className="primary-btn"
                   onClick={() => setShowFullReport(true)}
                 >
-                  📋 Полный отчет
+                  Полный отчет
                 </button>
               ) : null}
             </div>
@@ -1810,13 +1866,13 @@ export default function App() {
                 }}
                 disabled={aiMatchingLoading || !selectedVacancyForMatching}
               >
-                {aiMatchingLoading ? "⏳ Анализ кандидатов..." : "🚀 Запустить AI-анализ"}
+                {aiMatchingLoading ? "Анализ кандидатов..." : "Запустить AI-анализ"}
               </button>
             </div>
             
             {aiMatchingError ? (
               <div className="error-banner">
-                ⚠️ {aiMatchingError}
+                {aiMatchingError}
                 <div className="muted">
                   Убедитесь, что AI-сервис запущен: cd ai && python app.py
                 </div>
@@ -1826,7 +1882,7 @@ export default function App() {
             {aiMatches.length > 0 ? (
               <div className="ai-summary-enhanced">
                 <div className="summary-header">
-                  <h4>📊 Результаты анализа</h4>
+                  <h4>Результаты анализа</h4>
                   <div className="summary-actions">
                     <button
                       className="export-btn"
@@ -1847,14 +1903,13 @@ export default function App() {
                         link.click();
                       }}
                     >
-                      📥 Экспорт CSV
+                      Экспорт CSV
                     </button>
                   </div>
                 </div>
                 
                 <div className="kpi-grid-enhanced">
                   <div className="stat-card total">
-                    <div className="stat-icon">📊</div>
                     <div className="stat-content">
                       <span className="stat-label">Всего проанализировано</span>
                       <span className="stat-value">{aiMatches.length}</span>
@@ -1862,7 +1917,6 @@ export default function App() {
                   </div>
                   
                   <div className="stat-card suitable">
-                    <div className="stat-icon">🟢</div>
                     <div className="stat-content">
                       <span className="stat-label">Подходящие (7-10)</span>
                       <span className="stat-value">{aiMatches.filter(m => m.score >= 7).length}</span>
@@ -1873,7 +1927,6 @@ export default function App() {
                   </div>
                   
                   <div className="stat-card conditional">
-                    <div className="stat-icon">🟡</div>
                     <div className="stat-content">
                       <span className="stat-label">Условно подходящие (4-6)</span>
                       <span className="stat-value">{aiMatches.filter(m => m.score >= 4 && m.score < 7).length}</span>
@@ -1884,7 +1937,6 @@ export default function App() {
                   </div>
                   
                   <div className="stat-card unsuitable">
-                    <div className="stat-icon">🔴</div>
                     <div className="stat-content">
                       <span className="stat-label">Не подходящие (1-3)</span>
                       <span className="stat-value">{aiMatches.filter(m => m.score < 4).length}</span>
@@ -1897,21 +1949,21 @@ export default function App() {
                 
                 {aiMatches.filter(m => m.needs_review).length > 0 ? (
                   <div className="warning-banner">
-                    ⚠️ <strong>{aiMatches.filter(m => m.needs_review).length} кандидатов</strong> требуют дополнительной проверки HR-специалистом
+                    <strong>{aiMatches.filter(m => m.needs_review).length} кандидатов</strong> требуют дополнительной проверки HR-специалистом
                   </div>
                 ) : null}
                 
                 <div className="ai-insights">
-                  <h5>💡 Рекомендации:</h5>
+                  <h5>Рекомендации:</h5>
                   <ul>
                     {aiMatches.filter(m => m.score >= 7).length > 0 ? (
-                      <li>✅ Приглашайте на собеседование {aiMatches.filter(m => m.score >= 7).length} лучших кандидатов</li>
+                      <li>Приглашайте на собеседование {aiMatches.filter(m => m.score >= 7).length} лучших кандидатов</li>
                     ) : (
-                      <li>⚠️ Идеальных кандидатов не найдено. Рассмотрите условно подходящих.</li>
+                      <li>Идеальных кандидатов не найдено. Рассмотрите условно подходящих.</li>
                     )}
                     {aiMatches.filter(m => m.score >= 7).length > 0 ? (
                       <li>
-                        🏆 Топ кандидат: {(() => {
+                        Топ кандидат: {(() => {
                           const topMatch = aiMatches.reduce((prev, curr) => prev.score > curr.score ? prev : curr);
                           const topCand = candidates.find(c => c.id === topMatch.candidate_id);
                           return `${topCand?.name || 'N/A'} (${topMatch.score.toFixed(1)}/10)`;
@@ -1919,7 +1971,7 @@ export default function App() {
                       </li>
                     ) : null}
                     <li>
-                      📊 Средняя оценка: {(aiMatches.reduce((sum, m) => sum + m.score, 0) / aiMatches.length).toFixed(1)}/10
+                      Средняя оценка: {(aiMatches.reduce((sum, m) => sum + m.score, 0) / aiMatches.length).toFixed(1)}/10
                     </li>
                   </ul>
                 </div>
@@ -1930,7 +1982,7 @@ export default function App() {
           {aiMatches.length > 0 ? (
             <>
               <div className="card">
-                <h3>🟢 Подходящие кандидаты (7-10 баллов)</h3>
+                <h3>Подходящие кандидаты (7-10 баллов)</h3>
                 <p className="muted">Рекомендуются к приглашению на собеседование</p>
                 {aiMatches.filter(m => m.score >= 7).length === 0 ? (
                   <p className="muted">Кандидатов в этой категории нет</p>
@@ -1953,28 +2005,28 @@ export default function App() {
                             </div>
                             <div className="match-details">
                               <div className="detail-row">
-                                <span>🎯 Навыки:</span>
+                                <span>Навыки:</span>
                                 <span>
                                   {match.details.skills_match.matched}/{match.details.skills_match.required}
                                   {match.details.skills_match.matched >= match.details.skills_match.required ? " ✓" : ""}
                                 </span>
                               </div>
                               <div className="detail-row">
-                                <span>🧠 Семантика:</span>
+                                <span>Семантика:</span>
                                 <span>{Math.round(match.details.semantic_similarity * 100)}%</span>
                               </div>
                               <div className="detail-row">
-                                <span>💼 Опыт:</span>
+                                <span>Опыт:</span>
                                 <span>{Math.round(match.details.experience_match * 100)}%</span>
                               </div>
                               <div className="detail-row">
-                                <span>🎓 Образование:</span>
+                                <span>Образование:</span>
                                 <span>{match.details.education_match ? "✓ Да" : "✗ Нет"}</span>
                               </div>
                             </div>
                             <p className="match-explanation">{match.explanation}</p>
                             {match.needs_review ? (
-                              <span className="review-badge">⚠️ Требует проверки HR</span>
+                              <span className="review-badge">Требует проверки HR</span>
                             ) : null}
                             <button
                               className="secondary-btn"
@@ -2021,7 +2073,7 @@ export default function App() {
               </div>
               
               <div className="card">
-                <h3>🟡 Условно подходящие (4-6 баллов)</h3>
+                <h3>Условно подходящие (4-6 баллов)</h3>
                 <p className="muted">Рассматриваются при отсутствии лучших кандидатов</p>
                 {aiMatches.filter(m => m.score >= 4 && m.score < 7).length === 0 ? (
                   <p className="muted">Кандидатов в этой категории нет</p>
@@ -2044,17 +2096,17 @@ export default function App() {
                             </div>
                             <div className="match-details">
                               <div className="detail-row">
-                                <span>🎯 Навыки:</span>
+                                <span>Навыки:</span>
                                 <span>{match.details.skills_match.matched}/{match.details.skills_match.required}</span>
                               </div>
                               <div className="detail-row">
-                                <span>🧠 Семантика:</span>
+                                <span>Семантика:</span>
                                 <span>{Math.round(match.details.semantic_similarity * 100)}%</span>
                               </div>
                             </div>
                             <p className="match-explanation">{match.explanation}</p>
                             {match.needs_review ? (
-                              <span className="review-badge">⚠️ Требует проверки HR</span>
+                              <span className="review-badge">Требует проверки HR</span>
                             ) : null}
                           </li>
                         );
@@ -2064,7 +2116,7 @@ export default function App() {
               </div>
               
               <div className="card">
-                <h3>🔴 Не подходящие (1-3 балла)</h3>
+                <h3>Не подходящие (1-3 балла)</h3>
                 <p className="muted">Не соответствуют требованиям вакансии</p>
                 {aiMatches.filter(m => m.score < 4).length === 0 ? (
                   <p className="muted">Кандидатов в этой категории нет</p>
@@ -2121,7 +2173,7 @@ export default function App() {
               </div>
               
               <div className="info-banner">
-                ℹ️ Выберите вакансию выше и нажмите "Запустить AI-анализ" для автоматического подбора кандидатов
+                Выберите вакансию выше и нажмите "Запустить AI-анализ" для автоматического подбора кандидатов
               </div>
             </div>
           )}
@@ -2145,11 +2197,9 @@ export default function App() {
                     }))
                   }
                 >
-                  <option>Все отделы</option>
-                  <option>Продукт</option>
-                  <option>AI/ML</option>
-                  <option>HR</option>
-                  <option>Аналитика</option>
+                  {departmentOptions.map((opt) => (
+                    <option key={opt}>{opt}</option>
+                  ))}
                 </select>
               </label>
               <label className="field">
@@ -2219,63 +2269,98 @@ export default function App() {
             </div>
             <button className="primary-btn">Сохранить набор</button>
           </div>
-          {analyticsCharts.map((chart) =>
-            enabledWidgets.includes("time") &&
-            chart.id === "time-to-hire" ? (
-              <div className="card" key={chart.id}>
-                <h3>{chart.title}</h3>
-                <div className="chart">
-                  {chart.data.map((item) => (
+          {enabledWidgets.includes("kpis") ? (
+            <div className="card">
+              <h3>KPI карточки</h3>
+              <section className="kpi-grid">
+                {analyticsKpis.map((kpi) => (
+                  <div className="card" key={kpi.label}>
+                    <p className="card-label">{kpi.label}</p>
+                    <h2>{kpi.value}</h2>
+                  </div>
+                ))}
+              </section>
+            </div>
+          ) : null}
+          {enabledWidgets.includes("pipeline") ? (
+            <div className="card">
+              <h3>Воронка найма</h3>
+              <ul className="funnel">
+                {analyticsStages.map((stage) => (
+                  <li key={stage.label}>
+                    <span>{stage.label}</span>
+                    <span>{stage.value}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {enabledWidgets.includes("time") && analyticsChartData["time-to-hire"].data.length > 0 ? (
+            <div className="card">
+              <h3>{analyticsChartData["time-to-hire"].title}</h3>
+              <div className="chart">
+                {analyticsChartData["time-to-hire"].data.map((item) => {
+                  const maxVal = Math.max(...analyticsChartData["time-to-hire"].data.map((d) => d.value), 1);
+                  return (
                     <div className="chart-row" key={item.label}>
                       <span className="muted">{item.label}</span>
                       <div className="chart-bar">
-                        <span style={{ width: `${item.value}%` }} />
+                        <span style={{ width: `${(item.value / maxVal) * 100}%` }} />
                       </div>
                       <strong>{item.value}</strong>
                     </div>
-                  ))}
-                </div>
+                  );
+                })}
               </div>
-            ) : null
-          )}
-          {analyticsCharts.map((chart) =>
-            enabledWidgets.includes("sources") &&
-            chart.id === "source-quality" ? (
-              <div className="card" key={chart.id}>
-                <h3>{chart.title}</h3>
-                <div className="chart">
-                  {chart.data.map((item) => (
-                    <div className="chart-row" key={item.label}>
-                      <span className="muted">{item.label}</span>
-                      <div className="chart-bar">
-                        <span style={{ width: `${item.value}%` }} />
-                      </div>
-                      <strong>{item.value}%</strong>
+            </div>
+          ) : enabledWidgets.includes("time") ? (
+            <div className="card">
+              <h3>{analyticsChartData["time-to-hire"].title}</h3>
+              <p className="muted">Данных пока нет</p>
+            </div>
+          ) : null}
+          {enabledWidgets.includes("sources") && analyticsChartData["source-quality"].data.length > 0 ? (
+            <div className="card">
+              <h3>{analyticsChartData["source-quality"].title}</h3>
+              <div className="chart">
+                {analyticsChartData["source-quality"].data.map((item) => (
+                  <div className="chart-row" key={item.label}>
+                    <span className="muted">{item.label}</span>
+                    <div className="chart-bar">
+                      <span style={{ width: `${item.value}%` }} />
                     </div>
-                  ))}
-                </div>
+                    <strong>{item.value}%</strong>
+                  </div>
+                ))}
               </div>
-            ) : null
-          )}
-          {analyticsCharts.map((chart) =>
-            enabledWidgets.includes("conversion") &&
-            chart.id === "stage-conversion" ? (
-              <div className="card" key={chart.id}>
-                <h3>{chart.title}</h3>
-                <div className="chart">
-                  {chart.data.map((item) => (
-                    <div className="chart-row" key={item.label}>
-                      <span className="muted">{item.label}</span>
-                      <div className="chart-bar">
-                        <span style={{ width: `${item.value}%` }} />
-                      </div>
-                      <strong>{item.value}%</strong>
+            </div>
+          ) : enabledWidgets.includes("sources") ? (
+            <div className="card">
+              <h3>{analyticsChartData["source-quality"].title}</h3>
+              <p className="muted">Данных пока нет</p>
+            </div>
+          ) : null}
+          {enabledWidgets.includes("conversion") && analyticsChartData["stage-conversion"].data.some((d) => d.value > 0) ? (
+            <div className="card">
+              <h3>{analyticsChartData["stage-conversion"].title}</h3>
+              <div className="chart">
+                {analyticsChartData["stage-conversion"].data.map((item) => (
+                  <div className="chart-row" key={item.label}>
+                    <span className="muted">{item.label}</span>
+                    <div className="chart-bar">
+                      <span style={{ width: `${item.value}%` }} />
                     </div>
-                  ))}
-                </div>
+                    <strong>{item.value}%</strong>
+                  </div>
+                ))}
               </div>
-            ) : null
-          )}
+            </div>
+          ) : enabledWidgets.includes("conversion") ? (
+            <div className="card">
+              <h3>{analyticsChartData["stage-conversion"].title}</h3>
+              <p className="muted">Данных пока нет</p>
+            </div>
+          ) : null}
         </section>
       ) : null}
  
@@ -2773,7 +2858,7 @@ export default function App() {
           <div className="modal modal-wide">
             <div className="modal-header">
               <div>
-                <h3>📋 Полный отчет по AI-матчингу</h3>
+                <h3>Полный отчет по AI-матчингу</h3>
                 <p className="muted">
                   Вакансия: {vacancies.find(v => v.id === selectedVacancyForMatching)?.title || 'N/A'}
                 </p>
@@ -2798,19 +2883,19 @@ export default function App() {
                   className={`filter-chip ${reportFilter === "suitable" ? "active" : ""}`}
                   onClick={() => setReportFilter("suitable")}
                 >
-                  🟢 Подходящие ({aiMatches.filter(m => m.score >= 7).length})
+                  Подходящие ({aiMatches.filter(m => m.score >= 7).length})
                 </button>
                 <button
                   className={`filter-chip ${reportFilter === "conditional" ? "active" : ""}`}
                   onClick={() => setReportFilter("conditional")}
                 >
-                  🟡 Условно ({aiMatches.filter(m => m.score >= 4 && m.score < 7).length})
+                  Условно ({aiMatches.filter(m => m.score >= 4 && m.score < 7).length})
                 </button>
                 <button
                   className={`filter-chip ${reportFilter === "unsuitable" ? "active" : ""}`}
                   onClick={() => setReportFilter("unsuitable")}
                 >
-                  🔴 Не подходят ({aiMatches.filter(m => m.score < 4).length})
+                  Не подходят ({aiMatches.filter(m => m.score < 4).length})
                 </button>
               </div>
               
@@ -2882,7 +2967,7 @@ export default function App() {
                             </span>
                             {match.needs_review ? (
                               <span className="needs-review-pill">
-                                ⚠️ Проверить
+                                Проверить
                               </span>
                             ) : null}
                           </div>
@@ -2928,7 +3013,7 @@ export default function App() {
                       link.click();
                     }}
                   >
-                    📥 Скачать полный отчет (CSV)
+                    Скачать полный отчет (CSV)
                   </button>
                   <button
                     className="secondary-btn"

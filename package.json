@@ -1,0 +1,9 @@
+{
+  "name": "hr-crm",
+  "private": true,
+  "scripts": {
+    "dev": "npx concurrently -n \"backend,frontend\" -c \"blue,magenta\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev"
+  }
+}
