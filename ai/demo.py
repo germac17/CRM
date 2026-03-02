@@ -188,28 +188,21 @@ def print_separator(title: str = ""):
 
 
 def print_match_result(match, candidate_name: str):
-    """Красивый вывод результата матчинга"""
-    # Эмодзи для категорий
-    emoji = {
-        "Подходящие": "🟢",
-        "Условно подходящие": "🟡",
-        "Не подходящие": "🔴"
-    }
-    
-    print(f"\n{emoji.get(match.category, '⚪')} {candidate_name}")
+    """Вывод результата матчинга"""
+    print(f"\n[{match.category}] {candidate_name}")
     print(f"   Оценка: {match.score}/10")
     print(f"   Категория: {match.category}")
     print(f"   Уверенность модели: {match.confidence*100:.0f}%")
     if match.needs_review:
-        print(f"   ⚠️  Требует проверки HR")
+        print(f"   Требует проверки HR")
     
-    print(f"\n   📊 Детали:")
+    print(f"\n   Детали:")
     print(f"      • Навыки: {match.details.skills_match.get('matched', 0)}/{match.details.skills_match.get('required', 0)}")
     print(f"      • Семантическое сходство: {match.details.semantic_similarity*100:.0f}%")
     print(f"      • Соответствие опыта: {match.details.experience_match*100:.0f}%")
-    print(f"      • Образование: {'✓' if match.details.education_match else '✗'}")
+    print(f"      • Образование: {'Да' if match.details.education_match else 'Нет'}")
     
-    print(f"\n   💬 Объяснение:")
+    print(f"\n   Объяснение:")
     print(f"      {match.explanation}")
     
     print_separator()
@@ -224,9 +217,9 @@ def main():
     """)
     
     # Инициализация сервиса
-    print("⏳ Инициализация AI-сервиса...")
+    print("Инициализация AI-сервиса...")
     matcher = MatcherService()
-    print("✓ Сервис инициализирован\n")
+    print("Сервис инициализирован\n")
     
     # Создание демо-данных
     vacancy = create_demo_vacancy()
@@ -240,21 +233,21 @@ def main():
     print(f"\nОписание:\n{vacancy.description}")
     
     if vacancy.requirements:
-        print(f"\n✅ Обязательные требования:")
+        print(f"\nОбязательные требования:")
         for req in vacancy.requirements.must_have:
             print(f"   • {req.type}: {req.value} (вес: {req.weight}/5)")
         
-        print(f"\n⭐ Желательные навыки:")
+        print(f"\nЖелательные навыки:")
         for req in vacancy.requirements.nice_to_have:
             print(f"   • {req.type}: {req.value} (вес: {req.weight}/5)")
     
     # Матчинг всех кандидатов
     print_separator("АНАЛИЗ КАНДИДАТОВ")
-    print(f"\n🔍 Анализируем {len(candidates)} кандидатов...")
+    print(f"\nАнализируем {len(candidates)} кандидатов...")
     
     matches = matcher.match_batch(vacancy, candidates)
     
-    print(f"✓ Анализ завершен\n")
+    print(f"Анализ завершен\n")
     
     # Вывод результатов
     print_separator("РЕЗУЛЬТАТЫ МАТЧИНГА")
@@ -268,15 +261,15 @@ def main():
     summary = matcher.calculate_summary(matches)
     
     print_separator("СВОДКА")
-    print(f"\n📈 Всего кандидатов проанализировано: {summary['total']}")
-    print(f"\n   🟢 Подходящие (7+ баллов): {summary['suitable']}")
-    print(f"   🟡 Условно подходящие (4-6 баллов): {summary['conditional']}")
-    print(f"   🔴 Не подходящие (1-3 балла): {summary['unsuitable']}")
-    print(f"\n   📊 Средняя оценка: {summary['average_score']}/10")
-    print(f"   ⚠️  Требуют проверки HR: {summary['needs_review_count']}")
+    print(f"\nВсего кандидатов проанализировано: {summary['total']}")
+    print(f"\n   Подходящие (7+ баллов): {summary['suitable']}")
+    print(f"   Условно подходящие (4-6 баллов): {summary['conditional']}")
+    print(f"   Не подходящие (1-3 балла): {summary['unsuitable']}")
+    print(f"\n   Средняя оценка: {summary['average_score']}/10")
+    print(f"   Требуют проверки HR: {summary['needs_review_count']}")
     
     if summary.get('top_candidate'):
-        print(f"\n   🏆 Лучший кандидат:")
+        print(f"\n   Лучший кандидат:")
         print(f"      ID: {summary['top_candidate']['id']}")
         print(f"      Оценка: {summary['top_candidate']['score']}/10")
         print(f"      Категория: {summary['top_candidate']['category']}")
@@ -286,16 +279,16 @@ def main():
     
     suitable = matcher.filter_by_category(matches, "Подходящие")
     if suitable:
-        print(f"\n✅ Рекомендуем пригласить на собеседование:")
+        print(f"\nРекомендуем пригласить на собеседование:")
         for match in suitable[:3]:
             candidate = next(c for c in candidates if c.id == match.candidate_id)
             print(f"   • {candidate.name} (оценка: {match.score}/10)")
     else:
-        print(f"\n⚠️  Идеальных кандидатов не найдено.")
+        print(f"\nИдеальных кандидатов не найдено.")
         print(f"   Рассмотрите кандидатов из категории 'Условно подходящие'")
     
     print_separator()
-    print("\n✨ Демонстрация завершена!\n")
+    print("\nДемонстрация завершена.\n")
 
 
 if __name__ == "__main__":

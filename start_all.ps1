@@ -1,7 +1,7 @@
-# Скрипт для запуска всей системы HR CRM с ИИ-матчингом
+# Скрипт для запуска всей системы Найми
 
 Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host "           HR CRM - Запуск всей системы                       " -ForegroundColor Cyan
+Write-Host "           Найми - Запуск всей системы                        " -ForegroundColor Cyan
 Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Cyan
 Write-Host ""
 

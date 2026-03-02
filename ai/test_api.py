@@ -25,17 +25,17 @@ def test_health():
         
         if response.status_code == 200:
             data = response.json()
-            print(f"✓ Сервис работает: {data}")
+            print(f"Сервис работает: {data}")
             return True
         else:
-            print(f"✗ Ошибка: статус {response.status_code}")
+            print(f"Ошибка: статус {response.status_code}")
             return False
     except requests.exceptions.ConnectionError:
-        print(f"✗ Не удалось подключиться к {API_URL}")
+        print(f"Не удалось подключиться к {API_URL}")
         print("  Убедитесь, что сервис запущен: python app.py")
         return False
     except Exception as e:
-        print(f"✗ Ошибка: {e}")
+        print(f"Ошибка: {e}")
         return False
 
 
@@ -77,18 +77,18 @@ def test_parse_resume():
         
         if response.status_code == 200:
             data = response.json()
-            print(f"✓ Резюме распарсено успешно:")
+            print(f"Резюме распарсено успешно:")
             print(f"  • Навыки: {len(data.get('skills', []))} найдено")
             print(f"  • Опыт: {data.get('experience_years', 0)} лет")
             print(f"  • Образование: {data.get('education', 'N/A')}")
             print(f"  • Языки: {', '.join(data.get('languages', []))}")
             return True
         else:
-            print(f"✗ Ошибка: {response.status_code}")
+            print(f"Ошибка: {response.status_code}")
             print(f"  {response.text}")
             return False
     except Exception as e:
-        print(f"✗ Ошибка: {e}")
+        print(f"Ошибка: {e}")
         return False
 
 
@@ -96,7 +96,7 @@ def test_matching():
     """Тест матчинга (требует наличия данных)"""
     print_section("3. ТЕСТ МАТЧИНГА")
     
-    print("\n⚠️  Этот тест требует наличия данных в backend/data/")
+    print("\nЭтот тест требует наличия данных в backend/data/")
     print("   Убедитесь, что есть файлы:")
     print("   - user-usr-admin-vacancies.json")
     print("   - user-usr-admin-candidates.json")
@@ -107,23 +107,23 @@ def test_matching():
         
         if response.status_code == 200:
             stats = response.json()
-            print(f"\n📊 Статистика:")
+            print(f"\nСтатистика:")
             print(f"  • Кандидатов: {stats.get('candidates_count', 0)}")
             print(f"  • Вакансий: {stats.get('vacancies_count', 0)}")
             print(f"  • Матчей: {stats.get('matches_count', 0)}")
             
             if stats.get('candidates_count', 0) > 0 and stats.get('vacancies_count', 0) > 0:
-                print("\n✓ Данные найдены, можно тестировать матчинг")
+                print("\nДанные найдены, можно тестировать матчинг")
                 return True
             else:
-                print("\n⚠️  Недостаточно данных для тестирования матчинга")
+                print("\nНедостаточно данных для тестирования матчинга")
                 print("   Добавьте вакансии и кандидатов через frontend или backend API")
                 return False
         else:
-            print(f"✗ Ошибка получения статистики: {response.status_code}")
+            print(f"Ошибка получения статистики: {response.status_code}")
             return False
     except Exception as e:
-        print(f"✗ Ошибка: {e}")
+        print(f"Ошибка: {e}")
         return False
 
 
@@ -135,14 +135,14 @@ def test_documentation():
         response = requests.get(f"{API_URL}/docs", timeout=5)
         
         if response.status_code == 200:
-            print(f"✓ Документация доступна: {API_URL}/docs")
+            print(f"Документация доступна: {API_URL}/docs")
             print(f"  Откройте в браузере для просмотра всех endpoints")
             return True
         else:
-            print(f"✗ Документация недоступна: {response.status_code}")
+            print(f"Документация недоступна: {response.status_code}")
             return False
     except Exception as e:
-        print(f"✗ Ошибка: {e}")
+        print(f"Ошибка: {e}")
         return False
 
 
@@ -176,17 +176,17 @@ def main():
     
     print()
     for test_name, result in results:
-        status = "✓ PASSED" if result else "✗ FAILED"
+        status = "PASSED" if result else "FAILED"
         print(f"  {status:12} {test_name}")
     
     print(f"\n  Пройдено: {passed}/{total}")
     
     if passed == total:
-        print("\n  ✅ Все тесты пройдены успешно!")
-        print(f"\n  🚀 Сервис готов к работе: {API_URL}")
-        print(f"  📚 Документация: {API_URL}/docs")
+        print("\n  Все тесты пройдены успешно!")
+        print(f"\n  Сервис готов к работе: {API_URL}")
+        print(f"  Документация: {API_URL}/docs")
     else:
-        print("\n  ⚠️  Некоторые тесты не прошли")
+        print("\n  Некоторые тесты не прошли")
         print("     Проверьте вывод выше для деталей")
     
     print()

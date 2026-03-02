@@ -21,7 +21,7 @@ class NLPService:
             self.nlp = spacy.load(config.SPACY_MODEL)
         except OSError:
             # Модель не установлена, используем базовую обработку
-            print(f"⚠️ spaCy модель '{config.SPACY_MODEL}' не найдена.")
+            print(f"spaCy модель '{config.SPACY_MODEL}' не найдена.")
             print("Установите: python -m spacy download ru_core_news_md")
             self.nlp = None
     

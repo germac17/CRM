@@ -4,6 +4,7 @@ import express from "express";
 import helmet from "helmet";
 import morgan from "morgan";
 import { supabase } from "./supabase.js";
+import { getBotResponse } from "./support-bot.js";
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
@@ -123,7 +124,7 @@ const authMiddleware = async (req: express.Request, res: express.Response, next:
 // ---- Health ----
 
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "hr-crm-backend", db: "supabase" });
+  res.json({ status: "ok", service: "naymi-backend", db: "supabase" });
 });
 
 // ---- Vacancies ----
@@ -378,17 +379,33 @@ app.get("/support/messages", authMiddleware, async (req, res) => {
 
 app.post("/support/messages", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
-  const newMsg = {
+  const content = String(req.body.content ?? "").trim();
+  const now = new Date().toISOString();
+
+  const userMsg = {
     id: `msg-${Date.now()}`,
     user_id: userId,
-    content: String(req.body.content ?? ""),
+    content,
     sender: "user" as const,
+    timestamp: now
+  };
+  const { error: errUser } = await supabase.from("support_messages").insert(userMsg);
+  if (errUser) { res.status(500).json({ error: errUser.message }); return; }
+
+  const botReply = getBotResponse(content);
+  const botMsg = {
+    id: `msg-${Date.now()}-bot`,
+    user_id: userId,
+    content: botReply,
+    sender: "support" as const,
     timestamp: new Date().toISOString()
   };
-  const { error } = await supabase.from("support_messages").insert(newMsg);
-  if (error) { res.status(500).json({ error: error.message }); return; }
-  const { user_id, ...clean } = newMsg;
-  res.json({ data: [clean] });
+  const { error: errBot } = await supabase.from("support_messages").insert(botMsg);
+  if (errBot) { res.status(500).json({ error: errBot.message }); return; }
+
+  const { user_id: _1, ...cleanUser } = userMsg;
+  const { user_id: _2, ...cleanBot } = botMsg;
+  res.json({ data: [cleanUser, cleanBot] });
 });
 
 // ---- Admin ----
@@ -517,6 +534,166 @@ app.post("/auth/login", async (req, res) => {
   });
 });
 
+// ---- Integrations ----
+
+const INTEGRATION_SERVICES = ["hh_ru", "linkedin", "google_workspace", "outlook", "slack"] as const;
+
+app.get("/integrations", authMiddleware, async (req, res) => {
+  const userId = (req as any).userId as string;
+  const { data, error } = await supabase
+    .from("integrations")
+    .select("service, status, last_sync_at")
+    .eq("user_id", userId);
+  const byService = new Map((data ?? []).map((r: any) => [r.service, r]));
+  const list = INTEGRATION_SERVICES.map((service) => {
+    const row = byService.get(service);
+    return {
+      service,
+      status: row?.status ?? "disconnected",
+      lastSyncAt: row?.last_sync_at ?? null,
+      hasKey: !!row?.status && row.status !== "disconnected"
+    };
+  });
+  res.json({ data: list });
+});
+
+app.put("/integrations/:service", authMiddleware, async (req, res) => {
+  const userId = (req as any).userId as string;
+  const service = String(req.params.service ?? "").toLowerCase().replace(/[^a-z0-9_]/g, "_");
+  if (!INTEGRATION_SERVICES.includes(service as any)) {
+    res.status(400).json({ error: "Неизвестный сервис." });
+    return;
+  }
+  const apiKey = String(req.body.api_key ?? "").trim();
+  if (!apiKey) {
+    res.status(400).json({ error: "Укажите API ключ." });
+    return;
+  }
+  const { error } = await supabase.from("integrations").upsert(
+    {
+      user_id: userId,
+      service,
+      api_key_encrypted: apiKey,
+      status: "connected"
+    },
+    { onConflict: "user_id,service" }
+  );
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+  res.json({ data: { service, status: "connected" } });
+});
+
+app.delete("/integrations/:service", authMiddleware, async (req, res) => {
+  const userId = (req as any).userId as string;
+  const service = String(req.params.service ?? "").toLowerCase().replace(/[^a-z0-9_]/g, "_");
+  await supabase.from("integrations").delete().eq("user_id", userId).eq("service", service);
+  res.json({ success: true });
+});
+
+// Мок-данные для симуляции импорта из внешних сервисов
+const getMockVacanciesForService = (service: string) => {
+  const base = [
+    { title: "Frontend Developer", department: "Разработка", location: "Москва" },
+    { title: "Backend Engineer", department: "Разработка", location: "Удалённо" },
+    { title: "Product Manager", department: "Продукт", location: "Санкт-Петербург" }
+  ];
+  return base.map((v, i) => ({ ...v, id: `vac-${service}-${Date.now()}-${i}` }));
+};
+
+const getMockCandidatesForService = (service: string) => {
+  const base = [
+    { name: "Алексей Иванов", role: "Frontend Developer", skills: ["React", "TypeScript", "CSS"] },
+    { name: "Мария Петрова", role: "Backend Developer", skills: ["Python", "PostgreSQL", "Docker"] },
+    { name: "Дмитрий Сидоров", role: "Product Manager", skills: ["Agile", "Jira", "Analytics"] }
+  ];
+  return base.map((c, i) => ({ ...c, id: `cand-${service}-${Date.now()}-${i}` }));
+};
+
+app.post("/integrations/:service/sync", authMiddleware, async (req, res) => {
+  const userId = (req as any).userId as string;
+  const service = String(req.params.service ?? "").toLowerCase().replace(/[^a-z0-9_]/g, "_");
+  if (!INTEGRATION_SERVICES.includes(service as any)) {
+    res.status(400).json({ error: "Неизвестный сервис." });
+    return;
+  }
+
+  const { data: integration } = await supabase
+    .from("integrations")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("service", service)
+    .eq("status", "connected")
+    .single();
+
+  if (!integration) {
+    res.status(400).json({ error: "Сначала подключите интеграцию и укажите API ключ." });
+    return;
+  }
+
+  await supabase
+    .from("integrations")
+    .update({ status: "syncing" })
+    .eq("user_id", userId)
+    .eq("service", service);
+
+  try {
+    const vacancies = getMockVacanciesForService(service);
+    const candidates = getMockCandidatesForService(service);
+
+    for (const v of vacancies) {
+      await supabase.from("vacancies").insert({
+        id: v.id,
+        user_id: userId,
+        title: v.title,
+        department: v.department,
+        location: v.location,
+        status: "open",
+        source: service
+      });
+    }
+
+    for (const c of candidates) {
+      await supabase.from("candidates").insert({
+        id: c.id,
+        user_id: userId,
+        name: c.name,
+        role: c.role,
+        skills: c.skills,
+        stage: "Поиск",
+        source: service
+      });
+    }
+
+    const now = new Date().toISOString();
+    await supabase
+      .from("integrations")
+      .update({ status: "connected", last_sync_at: now })
+      .eq("user_id", userId)
+      .eq("service", service);
+
+    res.json({
+      data: {
+        service,
+        status: "connected",
+        lastSyncAt: now,
+        imported: { vacancies: vacancies.length, candidates: candidates.length }
+      }
+    });
+  } catch (err) {
+    await supabase
+      .from("integrations")
+      .update({ status: "error" })
+      .eq("user_id", userId)
+      .eq("service", service);
+    res.status(500).json({
+      error: "Ошибка синхронизации",
+      details: err instanceof Error ? err.message : String(err)
+    });
+  }
+});
+
 // ---- AI Matching ----
 
 app.post("/ai/match/batch", authMiddleware, async (req, res) => {
@@ -605,5 +782,5 @@ app.post("/ai/match/analyze", authMiddleware, async (req, res) => {
 // ---- Start ----
 
 app.listen(port, () => {
-  console.log(`HR CRM backend (Supabase) запущен на http://localhost:${port}`);
+  console.log(`Найми backend запущен на http://localhost:${port}`);
 });

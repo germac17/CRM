@@ -124,13 +124,20 @@ const getTabFromHash = () => {
  
  
  
-const integrations = [
-  { name: "HH.ru", status: "Подключено" },
-  { name: "LinkedIn", status: "Подключено" },
-  { name: "Google Workspace", status: "Подключено" },
-  { name: "Outlook", status: "В работе" },
-  { name: "Slack", status: "Подключено" }
-];
+type Integration = {
+  service: string;
+  status: string;
+  lastSyncAt: string | null;
+  hasKey: boolean;
+};
+
+const INTEGRATION_LABELS: Record<string, string> = {
+  hh_ru: "HH.ru",
+  linkedin: "LinkedIn",
+  google_workspace: "Google Workspace",
+  outlook: "Outlook",
+  slack: "Slack"
+};
  
 const adminControls = [
   {
@@ -245,6 +252,12 @@ export default function App() {
     source: "",
     notes: ""
   });
+  const [integrationsList, setIntegrationsList] = useState<Integration[]>([]);
+  const [showIntegrationModal, setShowIntegrationModal] = useState(false);
+  const [selectedIntegrationService, setSelectedIntegrationService] = useState<string | null>(null);
+  const [integrationApiKey, setIntegrationApiKey] = useState("");
+  const [integrationSyncLoading, setIntegrationSyncLoading] = useState<string | null>(null);
+  const [integrationConnectLoading, setIntegrationConnectLoading] = useState(false);
  
   useEffect(() => {
     if (!token) {
@@ -262,19 +275,19 @@ export default function App() {
           "Content-Type": "application/json"
         };
 
-        const [vacancyRes, candidateRes, matchRes, calendarRes, commRes, supportRes] = await Promise.all([
+        const [vacancyRes, candidateRes, matchRes, calendarRes, commRes, supportRes, integrationsRes] = await Promise.all([
           fetch(`${apiBase}/vacancies`, { headers }),
           fetch(`${apiBase}/candidates`, { headers }),
           fetch(`${apiBase}/matches`, { headers }),
           fetch(`${apiBase}/calendar`, { headers }),
           fetch(`${apiBase}/communications`, { headers }),
-          fetch(`${apiBase}/support/messages`, { headers })
+          fetch(`${apiBase}/support/messages`, { headers }),
+          fetch(`${apiBase}/integrations`, { headers })
         ]);
 
         if (!vacancyRes.ok || !candidateRes.ok || !matchRes.ok || !calendarRes.ok || !commRes.ok || !supportRes.ok) {
           throw new Error("API недоступен.");
         }
-
         const vacancyJson = (await vacancyRes.json()) as { data: Vacancy[] };
         const candidateJson = (await candidateRes.json()) as {
           data: Candidate[];
@@ -283,6 +296,15 @@ export default function App() {
         const calendarJson = (await calendarRes.json()) as { data: CalendarEvent[] };
         const commJson = (await commRes.json()) as { data: Communication[] };
         const supportJson = (await supportRes.json()) as { data: SupportMessage[] };
+        const integrationsFallback: Integration[] = ["hh_ru", "linkedin", "google_workspace", "outlook", "slack"].map((s) => ({
+          service: s,
+          status: "disconnected",
+          lastSyncAt: null,
+          hasKey: false
+        }));
+        const integrationsJson = integrationsRes.ok
+          ? ((await integrationsRes.json()) as { data: Integration[] })
+          : { data: integrationsFallback };
 
         setVacancies(vacancyJson.data);
         setCandidates(candidateJson.data);
@@ -290,6 +312,7 @@ export default function App() {
         setCalendarEvents(calendarJson.data);
         setCommunications(commJson.data);
         setSupportMessages(supportJson.data);
+        setIntegrationsList(integrationsJson.data);
         setError(null);
       } catch (err) {
         const message =
@@ -304,8 +327,8 @@ export default function App() {
   }, [token]);
  
   useEffect(() => {
-    const savedToken = localStorage.getItem("hrcrm_token");
-    const savedUser = localStorage.getItem("hrcrm_user");
+    const savedToken = localStorage.getItem("naymi_token");
+    const savedUser = localStorage.getItem("naymi_user");
     if (savedToken) {
       setToken(savedToken);
     }
@@ -497,7 +520,8 @@ export default function App() {
     if (
       normalized.includes("риск") ||
       normalized.includes("ошибка") ||
-      normalized.includes("крит")
+      normalized.includes("крит") ||
+      normalized === "error"
     ) {
       return "pill pill-danger";
     }
@@ -583,6 +607,106 @@ export default function App() {
     setActiveTab(tabId);
     window.location.hash = `tab=${tabId}`;
     setIsSidebarOpen(false);
+  };
+
+  const loadIntegrations = async () => {
+    if (!token) return;
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    try {
+      const res = await fetch(`${apiBase}/integrations`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const json = (await res.json()) as { data: Integration[] };
+        setIntegrationsList(json.data);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleIntegrationConnect = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedIntegrationService || !integrationApiKey.trim() || !token) return;
+    setIntegrationConnectLoading(true);
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    try {
+      const res = await fetch(`${apiBase}/integrations/${selectedIntegrationService}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ api_key: integrationApiKey.trim() })
+      });
+      if (res.ok) {
+        await loadIntegrations();
+        setShowIntegrationModal(false);
+        setSelectedIntegrationService(null);
+        setIntegrationApiKey("");
+      } else {
+        const err = (await res.json()) as { error?: string };
+        setError(err.error ?? "Ошибка подключения");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка подключения");
+    } finally {
+      setIntegrationConnectLoading(false);
+    }
+  };
+
+  const handleIntegrationDisconnect = async (service: string) => {
+    if (!token) return;
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    try {
+      const res = await fetch(`${apiBase}/integrations/${service}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) await loadIntegrations();
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleIntegrationSync = async (service: string) => {
+    if (!token) return;
+    setIntegrationSyncLoading(service);
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    try {
+      const res = await fetch(`${apiBase}/integrations/${service}/sync`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const json = (await res.json()) as { data: { imported: { vacancies: number; candidates: number } } };
+        await loadIntegrations();
+        const { vacancies: v, candidates: c } = json.data.imported;
+        setVacancies((prev) => [...prev]);
+        setCandidates((prev) => [...prev]);
+        const load = async () => {
+          const [vr, cr] = await Promise.all([
+            fetch(`${apiBase}/vacancies`, { headers: { Authorization: `Bearer ${token}` } }),
+            fetch(`${apiBase}/candidates`, { headers: { Authorization: `Bearer ${token}` } })
+          ]);
+          if (vr.ok && cr.ok) {
+            const vj = (await vr.json()) as { data: Vacancy[] };
+            const cj = (await cr.json()) as { data: Candidate[] };
+            setVacancies(vj.data);
+            setCandidates(cj.data);
+          }
+        };
+        await load();
+        setError(null);
+      } else {
+        const err = (await res.json()) as { error?: string };
+        setError(err.error ?? "Ошибка синхронизации");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка синхронизации");
+    } finally {
+      setIntegrationSyncLoading(null);
+    }
   };
  
   const handleCalendarNav = (direction: "prev" | "next") => {
@@ -963,8 +1087,8 @@ export default function App() {
  
       setToken(json.token);
       setCurrentUser(json.user);
-      localStorage.setItem("hrcrm_token", json.token);
-      localStorage.setItem("hrcrm_user", JSON.stringify(json.user));
+      localStorage.setItem("naymi_token", json.token);
+      localStorage.setItem("naymi_user", JSON.stringify(json.user));
       setAuthForm({ name: "", email: "", password: "" });
       setActiveTab("dashboard");
       window.location.hash = "tab=dashboard";
@@ -980,8 +1104,8 @@ export default function App() {
   const handleLogout = () => {
     setToken(null);
     setCurrentUser(null);
-    localStorage.removeItem("hrcrm_token");
-    localStorage.removeItem("hrcrm_user");
+    localStorage.removeItem("naymi_token");
+    localStorage.removeItem("naymi_user");
   };
  
   const handleVacancySubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -1162,7 +1286,7 @@ export default function App() {
       <div className="auth-page">
         <div className="auth-card">
           <div>
-            <h1>HR CRM платформа</h1>
+            <h1>Найми</h1>
             <p className="muted">
               Войдите или зарегистрируйтесь, чтобы продолжить работу.
             </p>
@@ -1196,6 +1320,7 @@ export default function App() {
                       name: event.target.value
                     }))
                   }
+                  placeholder="Иван Иванов"
                   required
                 />
               </label>
@@ -1211,6 +1336,7 @@ export default function App() {
                     email: event.target.value
                   }))
                 }
+                placeholder={authMode === "register" ? "ivan@company.ru" : "Введите email"}
                 required
               />
             </label>
@@ -1225,6 +1351,7 @@ export default function App() {
                     password: event.target.value
                   }))
                 }
+                placeholder={authMode === "register" ? "Минимум 6 символов" : "Введите пароль"}
                 required
               />
             </label>
@@ -1247,16 +1374,9 @@ export default function App() {
       <aside className={`sidebar ${isSidebarOpen ? "open" : ""}`}>
         <div className="sidebar-header">
           <div>
-            <strong>HR CRM</strong>
+            <strong>Найми</strong>
             <p className="muted">Навигация</p>
           </div>
-          <button
-            className="secondary-btn"
-            onClick={() => setIsSidebarOpen(false)}
-            type="button"
-          >
-            ✕
-          </button>
         </div>
         <nav className="sidebar-nav">
           {visibleTabs.map((tab) => (
@@ -1294,8 +1414,8 @@ export default function App() {
               ☰
             </button>
             <div>
-              <h1>HR CRM платформа</h1>
-              <p>Граф навыков и предиктивный матчинг</p>
+              <h1>Найми</h1>
+              <p>Платформа для умного найма</p>
             </div>
           </div>
           <div className="top-actions">
@@ -2008,7 +2128,7 @@ export default function App() {
                                 <span>Навыки:</span>
                                 <span>
                                   {match.details.skills_match.matched}/{match.details.skills_match.required}
-                                  {match.details.skills_match.matched >= match.details.skills_match.required ? " ✓" : ""}
+                                  {match.details.skills_match.matched >= match.details.skills_match.required ? " Да" : ""}
                                 </span>
                               </div>
                               <div className="detail-row">
@@ -2021,7 +2141,7 @@ export default function App() {
                               </div>
                               <div className="detail-row">
                                 <span>Образование:</span>
-                                <span>{match.details.education_match ? "✓ Да" : "✗ Нет"}</span>
+                                <span>{match.details.education_match ? "Да" : "Нет"}</span>
                               </div>
                             </div>
                             <p className="match-explanation">{match.explanation}</p>
@@ -2368,23 +2488,76 @@ export default function App() {
         <section className="grid">
           <div className="card">
             <h3>Интеграции</h3>
+            <p className="muted" style={{ marginBottom: "1rem" }}>
+              Подключите API ключи сервисов. После подключения вакансии и кандидаты автоматически синхронизируются в общую воронку.
+            </p>
             <ul className="funnel">
-              {integrations.map((integration) => (
-                <li key={integration.name}>
-                  <span>{integration.name}</span>
-                  <span className={pillClass(integration.status)}>
-                    {integration.status}
-                  </span>
+              {integrationsList.map((integration) => (
+                <li key={integration.service}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                    <span>{INTEGRATION_LABELS[integration.service] ?? integration.service}</span>
+                    {integration.lastSyncAt ? (
+                      <span className="muted" style={{ fontSize: "0.85rem" }}>
+                        Синхр.: {new Date(integration.lastSyncAt).toLocaleString("ru-RU")}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    {integration.hasKey ? (
+                      <>
+                        <span className={pillClass(integration.status === "connected" ? "Подключено" : integration.status)}>
+                          {integration.status === "connected" ? "Подключено" : integration.status}
+                        </span>
+                        <button
+                          className="secondary-btn"
+                          type="button"
+                          onClick={() => handleIntegrationSync(integration.service)}
+                          disabled={integrationSyncLoading === integration.service}
+                        >
+                          {integrationSyncLoading === integration.service ? "Синхронизация..." : "Синхронизировать"}
+                        </button>
+                        <button
+                          className="secondary-btn"
+                          type="button"
+                          onClick={() => handleIntegrationDisconnect(integration.service)}
+                        >
+                          Отключить
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        className="primary-btn"
+                        type="button"
+                        onClick={() => {
+                          setSelectedIntegrationService(integration.service);
+                          setIntegrationApiKey("");
+                          setShowIntegrationModal(true);
+                        }}
+                      >
+                        Подключить
+                      </button>
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>
           </div>
           <div className="card">
-            <h3>API-first</h3>
+            <h3>API ключи</h3>
             <p className="muted">
-              Webhooks, ключи доступа и управление интеграциями партнеров.
+              Укажите API ключ или токен доступа для каждого сервиса. Ключи хранятся в зашифрованном виде. После подключения нажмите «Синхронизировать», чтобы импортировать вакансии и кандидатов в общую воронку.
             </p>
-            <button className="secondary-btn">Управлять API ключами</button>
+            <button
+              className="secondary-btn"
+              type="button"
+              onClick={() => {
+                setSelectedIntegrationService(integrationsList[0]?.service ?? "hh_ru");
+                setIntegrationApiKey("");
+                setShowIntegrationModal(true);
+              }}
+            >
+              Добавить API ключ
+            </button>
           </div>
         </section>
       ) : null}
@@ -2505,6 +2678,58 @@ export default function App() {
       ) : null}
  
  
+      {showIntegrationModal && selectedIntegrationService ? (
+        <div className="modal-backdrop">
+          <div className="modal">
+            <div className="modal-header">
+              <h3>Подключить {INTEGRATION_LABELS[selectedIntegrationService] ?? selectedIntegrationService}</h3>
+              <button
+                className="secondary-btn"
+                type="button"
+                onClick={() => {
+                  setShowIntegrationModal(false);
+                  setSelectedIntegrationService(null);
+                  setIntegrationApiKey("");
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <form className="modal-body" onSubmit={handleIntegrationConnect}>
+              <label className="field">
+                API ключ или токен доступа
+                <input
+                  type="password"
+                  value={integrationApiKey}
+                  onChange={(e) => setIntegrationApiKey(e.target.value)}
+                  placeholder="Введите API ключ..."
+                  required
+                />
+              </label>
+              <p className="muted" style={{ fontSize: "0.9rem", marginTop: "0.5rem" }}>
+                Ключ будет сохранён в зашифрованном виде. После подключения нажмите «Синхронизировать» в списке интеграций, чтобы импортировать вакансии и кандидатов.
+              </p>
+              <div style={{ display: "flex", gap: "0.5rem", marginTop: "1rem" }}>
+                <button className="primary-btn" type="submit" disabled={integrationConnectLoading}>
+                  {integrationConnectLoading ? "Подключение..." : "Подключить"}
+                </button>
+                <button
+                  className="secondary-btn"
+                  type="button"
+                  onClick={() => {
+                    setShowIntegrationModal(false);
+                    setSelectedIntegrationService(null);
+                    setIntegrationApiKey("");
+                  }}
+                >
+                  Отмена
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
       {showVacancyModal ? (
         <div className="modal-backdrop">
           <div className="modal">
@@ -2520,7 +2745,7 @@ export default function App() {
                 }}
                 type="button"
               >
-                Закрыть
+                ×
               </button>
             </div>
             <form className="modal-body" onSubmit={handleVacancySubmit}>
@@ -2637,7 +2862,7 @@ export default function App() {
                 }}
                 type="button"
               >
-                Закрыть
+                ×
               </button>
             </div>
             <form className="modal-body" onSubmit={handleCandidateSubmit}>
@@ -2746,7 +2971,7 @@ export default function App() {
                 onClick={() => setShowEventModal(false)}
                 type="button"
               >
-                Закрыть
+                ×
               </button>
             </div>
             <form className="modal-body" onSubmit={handleEventSubmit}>
@@ -2868,7 +3093,7 @@ export default function App() {
                 onClick={() => setShowFullReport(false)}
                 type="button"
               >
-                Закрыть
+                ×
               </button>
             </div>
             <div className="modal-body">
@@ -2942,7 +3167,7 @@ export default function App() {
                         <div style={{flex: 1, textAlign: "center"}}>
                           <span className="metric-value">
                             {match.details.skills_match.matched}/{match.details.skills_match.required}
-                            {match.details.skills_match.matched >= match.details.skills_match.required ? " ✓" : ""}
+                            {match.details.skills_match.matched >= match.details.skills_match.required ? " Да" : ""}
                           </span>
                         </div>
                         <div style={{flex: 1, textAlign: "center"}}>
@@ -2957,7 +3182,7 @@ export default function App() {
                         </div>
                         <div style={{flex: 1, textAlign: "center"}}>
                           <span className="metric-value">
-                            {match.details.education_match ? "✓" : "✗"}
+                            {match.details.education_match ? "Да" : "Нет"}
                           </span>
                         </div>
                         <div style={{flex: 2}}>
@@ -3019,7 +3244,7 @@ export default function App() {
                     className="secondary-btn"
                     onClick={() => setShowFullReport(false)}
                   >
-                    Закрыть
+                    ×
                   </button>
                 </div>
               </div>
@@ -3045,7 +3270,7 @@ export default function App() {
                 }}
                 type="button"
               >
-                Закрыть
+                ×
               </button>
             </div>
             <form className="modal-body" onSubmit={handleCommSubmit}>
@@ -3159,7 +3384,7 @@ export default function App() {
             <div className="support-chat">
               <div className="support-chat-header">
                 <div>
-                  <strong>Поддержка HR CRM</strong>
+                  <strong>Поддержка Найми</strong>
                   <p className="muted">Онлайн</p>
                 </div>
                 <button
@@ -3167,13 +3392,13 @@ export default function App() {
                   onClick={() => setShowSupportChat(false)}
                   type="button"
                 >
-                  ✕
+                  ×
                 </button>
               </div>
               <div className="support-chat-body">
                 {supportMessages.length === 0 ? (
                   <p className="muted">
-                    Привет! Задайте вопрос и мы поможем вам разобраться.
+                    Бот поддержки отвечает на базовые вопросы. Задайте вопрос — например, о входе, вакансиях или ИИ-матчинге. Сложные запросы направляются на support.naymi@gmail.com
                   </p>
                 ) : (
                   supportMessages.map((msg) => (
@@ -3199,7 +3424,7 @@ export default function App() {
                   type="text"
                   value={supportInput}
                   onChange={(event) => setSupportInput(event.target.value)}
-                  placeholder="Напишите сообщение..."
+                  placeholder="Задайте вопрос — бот ответит или предложит написать на support.naymi@gmail.com"
                   disabled={supportLoading}
                 />
                 <button

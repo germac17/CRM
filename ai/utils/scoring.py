@@ -245,20 +245,20 @@ def generate_explanation(
         parts.append(f"Навыки: {matched}/{required} ({percentage:.0f}%)")
         
         if matched == required:
-            parts.append("✓ Все требуемые навыки присутствуют")
+            parts.append("Все требуемые навыки присутствуют")
         elif matched > 0:
             missing = skills_data.get("missing", [])
             if missing:
                 parts.append(f"Отсутствуют: {', '.join(missing[:3])}")
         else:
-            parts.append("✗ Требуемые навыки не найдены")
+            parts.append("Требуемые навыки не найдены")
     
     # Опыт
     cand_years = experience_data.get("candidate_years", 0)
     req_years = experience_data.get("required_years", 0)
     if req_years > 0:
         if cand_years >= req_years:
-            parts.append(f"✓ Опыт: {cand_years} лет (требуется {req_years})")
+            parts.append(f"Опыт: {cand_years} лет (требуется {req_years})")
         else:
             parts.append(f"Опыт: {cand_years} лет (требуется {req_years}) - недостаточно")
     elif cand_years > 0:
@@ -266,6 +266,6 @@ def generate_explanation(
     
     # Образование
     if education_data.get("match"):
-        parts.append("✓ Образование соответствует")
+        parts.append("Образование соответствует")
     
     return ". ".join(parts)

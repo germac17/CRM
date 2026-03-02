@@ -11,7 +11,7 @@ def create_test_data():
     data_dir = Path("../backend/data")
     data_dir.mkdir(exist_ok=True)
     
-    print("📝 Создание тестовых данных...")
+    print("Создание тестовых данных...")
     
     # Тестовые вакансии
     vacancies = [
@@ -163,13 +163,13 @@ def create_test_data():
     with open(candidates_file, "w", encoding="utf-8") as f:
         json.dump(candidates, f, ensure_ascii=False, indent=2)
     
-    print(f"✓ Создано {len(vacancies)} вакансий")
-    print(f"✓ Создано {len(candidates)} кандидатов")
-    print(f"\n📁 Файлы сохранены в: {data_dir.absolute()}")
+    print(f"Создано {len(vacancies)} вакансий")
+    print(f"Создано {len(candidates)} кандидатов")
+    print(f"\nФайлы сохранены в: {data_dir.absolute()}")
     print(f"   - {vacancies_file.name}")
     print(f"   - {candidates_file.name}")
     
-    print("\n🎉 Тестовые данные готовы!")
+    print("\nТестовые данные готовы.")
     print("\nТеперь вы можете:")
     print("1. Запустить AI-сервис: python app.py")
     print("2. Протестировать API: python test_api.py")

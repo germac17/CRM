@@ -1,5 +1,5 @@
 -- =============================================
--- HR CRM - Supabase Schema
+-- Найми - Supabase Schema
 -- Запустите этот SQL в Supabase Dashboard → SQL Editor
 -- =============================================
 
@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS vacancies (
   department TEXT DEFAULT '',
   location TEXT DEFAULT '',
   status TEXT DEFAULT 'open',
+  source TEXT DEFAULT 'manual',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -28,6 +29,7 @@ CREATE TABLE IF NOT EXISTS candidates (
   role TEXT DEFAULT '',
   skills JSONB DEFAULT '[]',
   stage TEXT DEFAULT 'Скрининг',
+  source TEXT DEFAULT 'manual',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -71,6 +73,16 @@ CREATE TABLE IF NOT EXISTS support_messages (
   timestamp TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS integrations (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  service TEXT NOT NULL,
+  api_key_encrypted TEXT,
+  status TEXT DEFAULT 'disconnected' CHECK (status IN ('disconnected', 'connected', 'syncing', 'error')),
+  last_sync_at TIMESTAMPTZ,
+  UNIQUE(user_id, service)
+);
+
 -- Индексы
 CREATE INDEX IF NOT EXISTS idx_vacancies_user ON vacancies(user_id);
 CREATE INDEX IF NOT EXISTS idx_candidates_user ON candidates(user_id);
@@ -78,6 +90,7 @@ CREATE INDEX IF NOT EXISTS idx_matches_user ON matches(user_id);
 CREATE INDEX IF NOT EXISTS idx_calendar_user ON calendar_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_communications_user ON communications(user_id);
 CREATE INDEX IF NOT EXISTS idx_support_user ON support_messages(user_id);
+CREATE INDEX IF NOT EXISTS idx_integrations_user ON integrations(user_id);
 
 -- Отключаем RLS (бэкенд сам проверяет авторизацию и фильтрует по user_id)
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
@@ -87,6 +100,7 @@ ALTER TABLE matches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE calendar_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE communications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE support_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE integrations ENABLE ROW LEVEL SECURITY;
 
 -- Разрешаем все операции для anon ключа (бэкенд сам контролирует доступ)
 DROP POLICY IF EXISTS "Allow all for anon" ON users;
@@ -96,6 +110,7 @@ DROP POLICY IF EXISTS "Allow all for anon" ON matches;
 DROP POLICY IF EXISTS "Allow all for anon" ON calendar_events;
 DROP POLICY IF EXISTS "Allow all for anon" ON communications;
 DROP POLICY IF EXISTS "Allow all for anon" ON support_messages;
+DROP POLICY IF EXISTS "Allow all for anon" ON integrations;
 
 CREATE POLICY "Allow all for anon" ON users FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all for anon" ON vacancies FOR ALL USING (true) WITH CHECK (true);
@@ -104,6 +119,7 @@ CREATE POLICY "Allow all for anon" ON matches FOR ALL USING (true) WITH CHECK (t
 CREATE POLICY "Allow all for anon" ON calendar_events FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all for anon" ON communications FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all for anon" ON support_messages FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all for anon" ON integrations FOR ALL USING (true) WITH CHECK (true);
 
 -- Вставляем администратора
 INSERT INTO users (id, name, email, password) VALUES ('usr-admin', 'Администратор', 'admin@crm.ru', 'admin')
