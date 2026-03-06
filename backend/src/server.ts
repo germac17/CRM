@@ -16,14 +16,7 @@ const port = Number(process.env.PORT ?? 4000);
 
 app.use(
   helmet({
-    contentSecurityPolicy: {
-      directives: {
-        ...helmet.contentSecurityPolicy.getDefaultDirectives(),
-        "worker-src": ["'self'", "blob:"],
-        "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-        "connect-src": ["'self'", "https://*.supabase.co", "wss://*.supabase.co"]
-      }
-    }
+    contentSecurityPolicy: false
   })
 );
 
