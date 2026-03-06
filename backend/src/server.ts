@@ -14,7 +14,18 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
 
-app.use(helmet());
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+        "worker-src": ["'self'", "blob:"],
+        "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        "connect-src": ["'self'", "https://*.supabase.co", "wss://*.supabase.co"]
+      }
+    }
+  })
+);
 
 const corsOrigins = [
   "http://localhost:3000",
@@ -25,7 +36,9 @@ const corsOrigins = [
   "https://www.naymi.tech",
   "http://www.naymi.tech",
   "https://api.naymi.tech",
-  "http://api.naymi.tech"
+  "http://api.naymi.tech",
+  /^https:\/\/.*\.onrender\.com$/,
+  /^http:\/\/.*\.onrender\.com$/
 ];
 app.use(cors({ origin: corsOrigins, credentials: true }));
 
