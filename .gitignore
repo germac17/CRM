@@ -8,6 +8,11 @@ venv/
 
 # Node
 node_modules/
+dist/
+*.tsbuildinfo
+
+# Deploy artifacts
+naymi-tech-deploy.zip
 
 # IDE
 .idea/

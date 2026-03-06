@@ -1,16 +1,34 @@
 import "dotenv/config";
 import cors from "cors";
 import express from "express";
+import fs from "fs";
 import helmet from "helmet";
 import morgan from "morgan";
+import path from "path";
+import { fileURLToPath } from "url";
 import { supabase } from "./supabase.js";
 import { getBotResponse } from "./support-bot.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
 
 app.use(helmet());
-app.use(cors());
+
+const corsOrigins = [
+  "http://localhost:3000",
+  "http://localhost:4000",
+  "http://127.0.0.1:3000",
+  "https://naymi.tech",
+  "http://naymi.tech",
+  "https://www.naymi.tech",
+  "http://www.naymi.tech",
+  "https://api.naymi.tech",
+  "http://api.naymi.tech"
+];
+app.use(cors({ origin: corsOrigins, credentials: true }));
+
 app.use(express.json({ limit: "1mb" }));
 app.use(morgan("dev"));
 
@@ -779,8 +797,23 @@ app.post("/ai/match/analyze", authMiddleware, async (req, res) => {
   }
 });
 
+// ---- Static (production: serve frontend only when deployed together) ----
+
+const isProduction = process.env.NODE_ENV === "production";
+const frontendDist = path.resolve(__dirname, "../../frontend/dist");
+
+if (isProduction && fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+  app.get("*", (_req, res) => {
+    res.sendFile(path.join(frontendDist, "index.html"));
+  });
+}
+
 // ---- Start ----
 
 app.listen(port, () => {
   console.log(`Найми backend запущен на http://localhost:${port}`);
+  if (isProduction) {
+    console.log(`Фронтенд: http://naymi.tech`);
+  }
 });

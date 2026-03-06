@@ -1,0 +1,25 @@
+# Render Blueprint — Backend API для naymi.tech
+# Документация: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: naymi-api
+    runtime: node
+
+    # Корневая папка — backend
+    rootDir: backend
+
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: AI_SERVICE_URL
+        value: ""
+        # Оставьте пустым, если AI-сервис не развёрнут.
+        # Или укажите URL, например: https://your-ai.onrender.com
