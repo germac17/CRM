@@ -10,7 +10,7 @@ DATA_DIR = BASE_DIR.parent / "backend" / "data"
 
 # API Settings
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
-API_PORT = int(os.getenv("API_PORT", "8001"))
+API_PORT = int(os.getenv("PORT", os.getenv("API_PORT", "8001")))
 
 # Backend Integration
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:4000")

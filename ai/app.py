@@ -15,6 +15,8 @@ from models import (
     Match,
     MatchRequest,
     BatchMatchRequest,
+    BatchMatchWithDataRequest,
+    MatchWithDataRequest,
     MatchResponse,
     CandidateResume,
 )
@@ -179,6 +181,56 @@ def analyze_single_match(request: MatchRequest):
     try:
         match = matcher_service.match_single(vacancy, candidate)
         return match
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка матчинга: {str(e)}")
+
+
+@app.post("/api/match/batch-with-data", response_model=MatchResponse)
+def analyze_batch_match_with_data(request: BatchMatchWithDataRequest):
+    """
+    Массовый матчинг с данными в теле запроса.
+    Используется для remote-режима: backend передаёт vacancy и candidates из Supabase.
+    """
+    try:
+        vacancy = Vacancy(**request.vacancy)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Неверный формат вакансии: {e}")
+    
+    candidates = []
+    for c in request.candidates:
+        try:
+            candidates.append(Candidate(**c))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Неверный формат кандидата {c.get('id', '?')}: {e}")
+    
+    if not candidates:
+        return MatchResponse(matches=[], summary={"total": 0})
+    
+    if len(candidates) > config.MAX_CANDIDATES_PER_REQUEST:
+        candidates = candidates[:config.MAX_CANDIDATES_PER_REQUEST]
+    
+    try:
+        matches = matcher_service.match_batch(vacancy, candidates)
+        summary = matcher_service.calculate_summary(matches)
+        return MatchResponse(matches=matches, summary=summary)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка матчинга: {str(e)}")
+
+
+@app.post("/api/match/analyze-with-data", response_model=Match)
+def analyze_single_match_with_data(request: MatchWithDataRequest):
+    """
+    Матчинг одного кандидата с данными в теле запроса.
+    Используется для remote-режима.
+    """
+    try:
+        vacancy = Vacancy(**request.vacancy)
+        candidate = Candidate(**request.candidate)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Неверный формат данных: {e}")
+    
+    try:
+        return matcher_service.match_single(vacancy, candidate)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка матчинга: {str(e)}")
 

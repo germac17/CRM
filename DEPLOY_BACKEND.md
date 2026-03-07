@@ -47,7 +47,7 @@ SUPABASE_KEY=ваш_service_role_key
 AI_SERVICE_URL=
 ```
 
-`AI_SERVICE_URL` можно оставить пустым, если AI-матчинг пока не используется.
+`AI_SERVICE_URL` — URL развёрнутого AI-сервиса (см. **DEPLOY_AI.md**). Если пусто, AI-матчинг будет возвращать 503.
 
 ### Шаг 4. Деплой
 

@@ -46,6 +46,20 @@ class BatchMatchRequest(BaseModel):
     auto_save: bool = Field(default=True, description="Автоматически сохранить результаты")
 
 
+class BatchMatchWithDataRequest(BaseModel):
+    """Запрос на массовый матчинг с данными (для remote — backend передаёт данные из Supabase)"""
+    
+    vacancy: dict  # Vacancy
+    candidates: list[dict]  # list[Candidate]
+
+
+class MatchWithDataRequest(BaseModel):
+    """Запрос на матчинг одного кандидата с данными"""
+    
+    vacancy: dict
+    candidate: dict
+
+
 class MatchResponse(BaseModel):
     """Ответ с результатами матчинга"""
     

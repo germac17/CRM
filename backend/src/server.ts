@@ -729,17 +729,44 @@ app.post("/ai/match/batch", authMiddleware, async (req, res) => {
     return;
   }
 
-  const aiServiceUrl = process.env.AI_SERVICE_URL ?? "http://localhost:8001";
+  const aiServiceUrl = process.env.AI_SERVICE_URL?.trim() || "";
+  if (!aiServiceUrl) {
+    res.status(503).json({
+      error: "AI-матчинг недоступен",
+      details: "Настройте AI_SERVICE_URL в переменных окружения backend и разверните AI-сервис"
+    });
+    return;
+  }
 
   try {
-    const aiResponse = await fetch(`${aiServiceUrl}/api/match/batch`, {
+    const [vacRes, candRes] = await Promise.all([
+      supabase.from("vacancies").select("*").eq("id", vacancy_id).eq("user_id", userId).single(),
+      supabase.from("candidates").select("*").eq("user_id", userId)
+    ]);
+
+    const vacancy = vacRes.data;
+    const candidates = candRes.data ?? [];
+    if (!vacancy) {
+      res.status(404).json({ error: "Вакансия не найдена" });
+      return;
+    }
+
+    const vacancyClean = Object.fromEntries(
+      Object.entries(vacancy).filter(([k]) => !["user_id", "created_at"].includes(k))
+    );
+    const candidatesClean = candidates.map((c: any) =>
+      Object.fromEntries(Object.entries(c).filter(([k]) => !["user_id", "created_at"].includes(k)))
+    );
+
+    const aiResponse = await fetch(`${aiServiceUrl}/api/match/batch-with-data`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ vacancy_id, auto_save: false })
+      body: JSON.stringify({ vacancy: vacancyClean, candidates: candidatesClean })
     });
 
     if (!aiResponse.ok) {
-      throw new Error(`AI-сервис вернул ошибку: ${aiResponse.status}`);
+      const errText = await aiResponse.text();
+      throw new Error(`AI-сервис: ${aiResponse.status} ${errText}`);
     }
 
     const aiData = await aiResponse.json() as any;
@@ -773,23 +800,51 @@ app.post("/ai/match/batch", authMiddleware, async (req, res) => {
 });
 
 app.post("/ai/match/analyze", authMiddleware, async (req, res) => {
+  const userId = (req as any).userId as string;
   const { vacancy_id, candidate_id } = req.body;
   if (!vacancy_id || !candidate_id) {
     res.status(400).json({ error: "Укажите vacancy_id и candidate_id" });
     return;
   }
 
-  const aiServiceUrl = process.env.AI_SERVICE_URL ?? "http://localhost:8001";
+  const aiServiceUrl = process.env.AI_SERVICE_URL?.trim() || "";
+  if (!aiServiceUrl) {
+    res.status(503).json({
+      error: "AI-матчинг недоступен",
+      details: "Настройте AI_SERVICE_URL в переменных окружения backend"
+    });
+    return;
+  }
 
   try {
-    const aiResponse = await fetch(`${aiServiceUrl}/api/match/analyze`, {
+    const [vacRes, candRes] = await Promise.all([
+      supabase.from("vacancies").select("*").eq("id", vacancy_id).eq("user_id", userId).single(),
+      supabase.from("candidates").select("*").eq("id", candidate_id).eq("user_id", userId).single()
+    ]);
+
+    const vacancy = vacRes.data;
+    const candidate = candRes.data;
+    if (!vacancy || !candidate) {
+      res.status(404).json({ error: "Вакансия или кандидат не найдены" });
+      return;
+    }
+
+    const vacancyClean = Object.fromEntries(
+      Object.entries(vacancy).filter(([k]) => !["user_id", "created_at"].includes(k))
+    );
+    const candidateClean = Object.fromEntries(
+      Object.entries(candidate).filter(([k]) => !["user_id", "created_at"].includes(k))
+    );
+
+    const aiResponse = await fetch(`${aiServiceUrl}/api/match/analyze-with-data`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ vacancy_id, candidate_id })
+      body: JSON.stringify({ vacancy: vacancyClean, candidate: candidateClean })
     });
 
     if (!aiResponse.ok) {
-      throw new Error(`AI-сервис вернул ошибку: ${aiResponse.status}`);
+      const errText = await aiResponse.text();
+      throw new Error(`AI-сервис: ${aiResponse.status} ${errText}`);
     }
 
     const aiData = await aiResponse.json();

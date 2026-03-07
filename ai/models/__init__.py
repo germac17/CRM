@@ -3,7 +3,7 @@
 """
 from .candidate import Candidate, CandidateResume
 from .vacancy import Vacancy, VacancyRequirements, FilterCriterion
-from .match import Match, MatchDetails, MatchRequest, BatchMatchRequest, MatchResponse
+from .match import Match, MatchDetails, MatchRequest, BatchMatchRequest, BatchMatchWithDataRequest, MatchWithDataRequest, MatchResponse
 
 __all__ = [
     "Candidate",
@@ -15,5 +15,7 @@ __all__ = [
     "MatchDetails",
     "MatchRequest",
     "BatchMatchRequest",
+    "BatchMatchWithDataRequest",
+    "MatchWithDataRequest",
     "MatchResponse",
 ]
