@@ -4,29 +4,5 @@
     "name": "Администратор",
     "email": "admin@crm.ru",
     "password": "admin"
-  },
-  {
-    "id": "usr-2",
-    "name": "Вася",
-    "email": "gepklrmjemf@mail.ru",
-    "password": "fdofoids"
-  },
-  {
-    "id": "usr-3",
-    "name": "Ваня",
-    "email": "germangrenenfs@gmail.com",
-    "password": "fuckyou2266"
-  },
-  {
-    "id": "usr-4",
-    "name": "Азатик",
-    "email": "germasdn@gmail.com",
-    "password": "fdsiofj"
-  },
-  {
-    "id": "usr-5",
-    "name": "Герман",
-    "email": "germangrennev@gmail.com",
-    "password": "fuckyou2266"
   }
 ]

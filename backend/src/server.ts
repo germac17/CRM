@@ -22,20 +22,11 @@ app.use(
   })
 );
 
-const corsOrigins = [
-  "http://localhost:3000",
-  "http://localhost:4000",
-  "http://127.0.0.1:3000",
-  "https://naymi.tech",
-  "http://naymi.tech",
-  "https://www.naymi.tech",
-  "http://www.naymi.tech",
-  "https://api.naymi.tech",
-  "http://api.naymi.tech",
-  /^https:\/\/.*\.onrender\.com$/,
-  /^http:\/\/.*\.onrender\.com$/
-];
-app.use(cors({ origin: corsOrigins, credentials: true }));
+const APP_ORIGIN = process.env.APP_URL ?? "http://localhost:3000";
+app.use(cors({
+  origin: [APP_ORIGIN, "http://localhost:3000", "http://localhost:4000", "http://127.0.0.1:3000", "http://127.0.0.1:4000"],
+  credentials: true
+}));
 
 app.use(express.json({ limit: "1mb" }));
 app.use(morgan("dev"));
@@ -148,6 +139,9 @@ const authMiddleware = async (req: express.Request, res: express.Response, next:
   next();
 };
 
+const isAdmin = (req: express.Request): boolean =>
+  String((req as any).userEmail ?? "").toLowerCase() === "admin@crm.ru";
+
 // ---- Health ----
 
 app.get("/health", (_req, res) => {
@@ -196,9 +190,6 @@ app.get("/plans", async (_req, res) => {
 
 app.get("/subscription", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
-  if (!FEATURE_TARIFFS) {
-    return res.json({ data: null });
-  }
   const sub = await ensureSubscription(userId);
   if (!sub) return res.status(500).json({ error: "Не удалось загрузить подписку." });
   res.json({ data: sub });
@@ -215,7 +206,7 @@ app.get("/vacancies", authMiddleware, async (req, res) => {
 
 app.post("/vacancies", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
-  if (FEATURE_TARIFFS) {
+  if (FEATURE_TARIFFS && !isAdmin(req)) {
     const sub = await ensureSubscription(userId);
     if (sub && sub.plan.limit_vacancies !== -1) {
       const { count } = await supabase.from("vacancies").select("id", { count: "exact", head: true }).eq("user_id", userId);
@@ -277,7 +268,7 @@ app.get("/candidates", authMiddleware, async (req, res) => {
 
 app.post("/candidates", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
-  if (FEATURE_TARIFFS) {
+  if (FEATURE_TARIFFS && !isAdmin(req)) {
     const sub = await ensureSubscription(userId);
     if (sub && sub.plan.limit_candidates !== -1) {
       const { count } = await supabase.from("candidates").select("id", { count: "exact", head: true }).eq("user_id", userId);
@@ -567,7 +558,8 @@ app.post("/admin/support-reply", authMiddleware, async (req, res) => {
 
 const FEATURE_EMAIL_VERIFICATION = process.env.FEATURE_EMAIL_VERIFICATION === "true";
 const FEATURE_TARIFFS = process.env.FEATURE_TARIFFS === "true";
-const APP_URL = process.env.APP_URL ?? "https://naymi.tech";
+const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
+const BACKEND_URL = process.env.BACKEND_URL ?? process.env.APP_URL ?? "http://localhost:4000";
 
 type Plan = {
   id: string;
@@ -610,16 +602,27 @@ async function getSubscription(userId: string): Promise<SubscriptionWithPlan | n
 async function ensureSubscription(userId: string): Promise<SubscriptionWithPlan | null> {
   let sub = await getSubscription(userId);
   if (sub) return sub;
-  const { data: freePlan } = await supabase.from("plans").select("id").eq("slug", "free").limit(1).single();
-  if (!freePlan) return null;
+  const { data: starterPlan } = await supabase.from("plans").select("id").eq("slug", "starter").limit(1).single();
+  if (!starterPlan) {
+    const { data: freePlan } = await supabase.from("plans").select("id").eq("slug", "free").limit(1).single();
+    if (!freePlan) return null;
+    const trialEnds = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+    await supabase.from("subscriptions").insert({
+      user_id: userId,
+      plan_id: freePlan.id,
+      status: "trial",
+      trial_ends_at: trialEnds,
+      current_period_ends_at: trialEnds
+    });
+    return getSubscription(userId);
+  }
   const trialEnds = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
-  const periodEnds = trialEnds;
   await supabase.from("subscriptions").insert({
     user_id: userId,
-    plan_id: freePlan.id,
+    plan_id: starterPlan.id,
     status: "trial",
     trial_ends_at: trialEnds,
-    current_period_ends_at: periodEnds
+    current_period_ends_at: trialEnds
   });
   return getSubscription(userId);
 }
@@ -655,37 +658,42 @@ app.post("/auth/register", async (req, res) => {
   const { error } = await supabase.from("users").insert(newUser);
   if (error) { res.status(500).json({ error: error.message }); return; }
 
-  if (FEATURE_TARIFFS) {
+  let planId: string | null = null;
+  const { data: starterPlan } = await supabase.from("plans").select("id").eq("slug", "starter").limit(1).single();
+  if (starterPlan) planId = starterPlan.id;
+  else {
     const { data: freePlan } = await supabase.from("plans").select("id").eq("slug", "free").limit(1).single();
-    if (freePlan) {
-      const trialEnds = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
-      await supabase.from("subscriptions").insert({
-        user_id: newUser.id,
-        plan_id: freePlan.id,
-        status: "trial",
-        trial_ends_at: trialEnds,
-        current_period_ends_at: trialEnds
-      });
-    }
+    if (freePlan) planId = freePlan.id;
+  }
+  if (planId) {
+    const trialEnds = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+    await supabase.from("subscriptions").insert({
+      user_id: newUser.id,
+      plan_id: planId,
+      status: "trial",
+      trial_ends_at: trialEnds,
+      current_period_ends_at: trialEnds
+    });
   }
 
   if (FEATURE_EMAIL_VERIFICATION) {
     const token = crypto.randomUUID();
+    const code = String(Math.floor(100000 + Math.random() * 900000));
     const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
     await supabase.from("verification_tokens").insert({
       user_id: newUser.id,
       token,
-      expires_at: expiresAt
+      expires_at: expiresAt,
+      code
     });
-    const apiBase = process.env.API_PUBLIC_URL || process.env.VITE_API_URL || APP_URL;
-    const verifyUrl = `${apiBase.replace(/\/$/, "")}/auth/verify?token=${token}`;
+    const verifyUrl = `${BACKEND_URL.replace(/\/$/, "")}/auth/verify?token=${token}`;
     try {
-      await sendVerificationEmail(normalizedEmail, verifyUrl, newUser.name);
+      await sendVerificationEmail(normalizedEmail, verifyUrl, newUser.name, code);
     } catch (err) {
       console.error("Ошибка отправки письма верификации:", err);
     }
     return res.json({
-      message: "На указанный email отправлено письмо со ссылкой для подтверждения. Проверьте папку «Спам», если письмо не пришло.",
+      message: "На указанный email отправлено письмо со ссылкой и кодом подтверждения. Проверьте папку «Спам», если письмо не пришло.",
       requires_verification: true,
       user: { id: newUser.id, name: newUser.name, email: newUser.email }
     });
@@ -725,6 +733,34 @@ app.get("/auth/verify", async (req, res) => {
     .eq("id", row.user_id);
 
   res.redirect(`${APP_URL}/login?verified=1`);
+});
+
+app.post("/auth/verify-code", async (req, res) => {
+  const { email, code } = req.body ?? {};
+  const normalizedEmail = String(email ?? "").trim().toLowerCase();
+  const codeStr = String(code ?? "").trim().replace(/\D/g, "");
+  if (!normalizedEmail || codeStr.length !== 6) {
+    return res.status(400).json({ error: "Укажите email и 6-значный код из письма." });
+  }
+  const { data: user } = await supabase.from("users").select("id").eq("email", normalizedEmail).limit(1).single();
+  if (!user) {
+    return res.status(404).json({ error: "Пользователь не найден." });
+  }
+  const { data: row } = await supabase
+    .from("verification_tokens")
+    .select("user_id")
+    .eq("user_id", user.id)
+    .eq("code", codeStr)
+    .is("used_at", null)
+    .gt("expires_at", new Date().toISOString())
+    .limit(1)
+    .single();
+  if (!row) {
+    return res.status(400).json({ error: "Код неверный или истёк. Запросите новое письмо, зарегистрировавшись снова." });
+  }
+  await supabase.from("verification_tokens").update({ used_at: new Date().toISOString() }).eq("user_id", user.id).eq("code", codeStr);
+  await supabase.from("users").update({ email_verified_at: new Date().toISOString() }).eq("id", user.id);
+  return res.json({ success: true, message: "Email подтверждён. Войдите в систему." });
 });
 
 app.post("/auth/login", async (req, res) => {
@@ -941,7 +977,7 @@ app.post("/ai/match/batch", authMiddleware, async (req, res) => {
     return;
   }
 
-  if (FEATURE_TARIFFS) {
+  if (FEATURE_TARIFFS && !isAdmin(req)) {
     const sub = await ensureSubscription(userId);
     if (sub && !sub.plan.ai_matching_enabled) {
       return res.status(403).json({ error: "AI-матчинг доступен на платных тарифах." });
@@ -1026,7 +1062,7 @@ app.post("/ai/match/analyze", authMiddleware, async (req, res) => {
     return;
   }
 
-  if (FEATURE_TARIFFS) {
+  if (FEATURE_TARIFFS && !isAdmin(req)) {
     const sub = await ensureSubscription(userId);
     if (sub && !sub.plan.ai_matching_enabled) {
       return res.status(403).json({ error: "AI-матчинг доступен на платных тарифах." });
@@ -1090,8 +1126,8 @@ if (isProduction && fs.existsSync(frontendDist)) {
 // ---- Start ----
 
 app.listen(port, () => {
-  console.log(`Найми backend запущен на http://localhost:${port}`);
+  console.log(`Найми backend: http://localhost:${port}`);
   if (isProduction) {
-    console.log(`Фронтенд: http://naymi.tech`);
+    console.log(`Фронтенд отдаётся с этого же сервера (${APP_ORIGIN})`);
   }
 });

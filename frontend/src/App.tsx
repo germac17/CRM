@@ -182,6 +182,8 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSuccess, setAuthSuccess] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
+  const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
+  const [verificationCode, setVerificationCode] = useState("");
   const [authForm, setAuthForm] = useState({
     name: "",
     email: "",
@@ -1149,8 +1151,9 @@ export default function App() {
       if (json.requires_verification) {
         setAuthError(null);
         setAuthForm({ name: "", email: json.user?.email ?? "", password: "" });
-        setAuthMode("login");
-        setAuthSuccess(json.message ?? "Проверьте почту и подтвердите регистрацию.");
+        setPendingVerificationEmail(json.user?.email ?? null);
+        setVerificationCode("");
+        setAuthSuccess(json.message ?? "На email отправлено письмо с кодом. Введите код ниже или перейдите по ссылке из письма.");
         return;
       }
 
@@ -1174,6 +1177,34 @@ export default function App() {
     }
   };
  
+  const handleVerifyCode = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!pendingVerificationEmail || verificationCode.trim().length !== 6) return;
+    setAuthError(null);
+    setAuthLoading(true);
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    try {
+      const res = await fetch(`${apiBase}/auth/verify-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: pendingVerificationEmail, code: verificationCode.trim() })
+      });
+      const json = (await res.json()) as { success?: boolean; message?: string; error?: string };
+      if (res.ok && json.success) {
+        setPendingVerificationEmail(null);
+        setVerificationCode("");
+        setAuthSuccess(json.message ?? "Email подтверждён. Войдите в систему.");
+        setAuthMode("login");
+      } else {
+        setAuthError(json.error ?? "Неверный код. Проверьте письмо или запросите новое.");
+      }
+    } catch {
+      setAuthError("Ошибка сети. Попробуйте ещё раз.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const handleLogout = () => {
     setToken(null);
     setCurrentUser(null);
@@ -1364,6 +1395,39 @@ export default function App() {
               Войдите или зарегистрируйтесь, чтобы продолжить работу.
             </p>
           </div>
+          {pendingVerificationEmail ? (
+            <>
+              <p className="muted">На <strong>{pendingVerificationEmail}</strong> отправлено письмо с кодом подтверждения.</p>
+              {authSuccess ? <p className="auth-success">{authSuccess}</p> : null}
+              {authError ? <p className="auth-error">{authError}</p> : null}
+              <form className="auth-form" onSubmit={handleVerifyCode}>
+                <label className="field">
+                  Код из письма (6 цифр)
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={verificationCode}
+                    onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, ""))}
+                    placeholder="000000"
+                    required
+                  />
+                </label>
+                <button className="primary-btn" type="submit" disabled={authLoading || verificationCode.length !== 6}>
+                  {authLoading ? "Проверка..." : "Подтвердить"}
+                </button>
+              </form>
+              <button
+                type="button"
+                className="secondary-btn"
+                style={{ marginTop: 8 }}
+                onClick={() => { setPendingVerificationEmail(null); setVerificationCode(""); setAuthMode("login"); }}
+              >
+                Отмена, войти по ссылке из письма
+              </button>
+            </>
+          ) : (
+          <>
           <div className="auth-switch">
             <button
               className={`tab ${authMode === "login" ? "active" : ""}`}
@@ -1438,6 +1502,8 @@ export default function App() {
                   : "Зарегистрироваться"}
             </button>
           </form>
+          </>
+          )}
         </div>
       </div>
     );
@@ -2625,7 +2691,7 @@ export default function App() {
                 )}
               </p>
             ) : (
-              <p className="muted">Тарифы отключены. Текущий функционал доступен без ограничений.</p>
+              <p className="muted">Загрузка тарифа...</p>
             )}
           </div>
           {plans.length > 0 && plans.map((plan) => (
@@ -2647,6 +2713,16 @@ export default function App() {
               {subscription?.plan.slug === plan.slug && (
                 <span className="pill">Текущий тариф</span>
               )}
+              {subscription?.plan.slug !== plan.slug && (plan.price_monthly === 0 ? null : (
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  style={{ marginTop: "8px" }}
+                  onClick={() => window.alert("Оплата: выберите способ оплаты (карта, СБП). Демо-режим — оплата подключается отдельно.")}
+                >
+                  Оплатить
+                </button>
+              ))}
             </div>
           ))}
         </section>
