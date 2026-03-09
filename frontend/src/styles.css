@@ -739,6 +739,12 @@ body {
   margin: 0;
   font-weight: 600;
 }
+
+.auth-success {
+  color: #059669;
+  margin: 0;
+  font-weight: 600;
+}
  
 @media (max-width: 1024px) {
   .sidebar {

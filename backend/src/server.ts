@@ -1,5 +1,6 @@
 import "dotenv/config";
 import cors from "cors";
+import crypto from "crypto";
 import express from "express";
 import fs from "fs";
 import helmet from "helmet";
@@ -8,6 +9,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { supabase } from "./supabase.js";
 import { getBotResponse } from "./support-bot.js";
+import { sendVerificationEmail } from "./mail.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -43,6 +45,7 @@ type User = {
   name: string;
   email: string;
   password: string;
+  email_verified_at?: string | null;
 };
 
 type Vacancy = {
@@ -151,6 +154,56 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "naymi-backend", db: "supabase" });
 });
 
+// ---- Plans & Subscription ----
+
+const DEFAULT_PLANS = [
+  { id: "free", name: "Базовый", slug: "free", price_monthly: 0, price_yearly: null, limit_vacancies: 3, limit_candidates: 50, ai_matching_enabled: false, limit_users: 1, priority_support: false, integrations_allowed: [] },
+  { id: "starter", name: "Старт", slug: "starter", price_monthly: 990, price_yearly: 9504, limit_vacancies: 15, limit_candidates: 300, ai_matching_enabled: true, limit_users: 3, priority_support: false, integrations_allowed: [] },
+  { id: "pro", name: "Про", slug: "pro", price_monthly: 3990, price_yearly: 38270, limit_vacancies: -1, limit_candidates: 2000, ai_matching_enabled: true, limit_users: 10, priority_support: true, integrations_allowed: [] }
+];
+
+app.get("/plans", async (_req, res) => {
+  try {
+    const { data } = await supabase
+      .from("plans")
+      .select("*")
+      .eq("hidden", false)
+      .order("price_monthly", { ascending: true });
+    if (data && data.length > 0) {
+      const plans = data.map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        slug: p.slug,
+        price_monthly: Number(p.price_monthly),
+        price_yearly: p.price_yearly != null ? Number(p.price_yearly) : null,
+        limit_vacancies: p.limit_vacancies === -1 ? "∞" : p.limit_vacancies,
+        limit_candidates: p.limit_candidates === -1 ? "∞" : p.limit_candidates,
+        ai_matching_enabled: p.ai_matching_enabled,
+        limit_users: p.limit_users,
+        priority_support: p.priority_support,
+        integrations_allowed: p.integrations_allowed ?? []
+      }));
+      return res.json({ data: plans });
+    }
+  } catch (_) { /* table may not exist */ }
+  const plans = DEFAULT_PLANS.map((p) => ({
+    ...p,
+    limit_vacancies: p.limit_vacancies === -1 ? "∞" : p.limit_vacancies,
+    limit_candidates: p.limit_candidates === -1 ? "∞" : p.limit_candidates
+  }));
+  res.json({ data: plans });
+});
+
+app.get("/subscription", authMiddleware, async (req, res) => {
+  const userId = (req as any).userId as string;
+  if (!FEATURE_TARIFFS) {
+    return res.json({ data: null });
+  }
+  const sub = await ensureSubscription(userId);
+  if (!sub) return res.status(500).json({ error: "Не удалось загрузить подписку." });
+  res.json({ data: sub });
+});
+
 // ---- Vacancies ----
 
 app.get("/vacancies", authMiddleware, async (req, res) => {
@@ -162,6 +215,15 @@ app.get("/vacancies", authMiddleware, async (req, res) => {
 
 app.post("/vacancies", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
+  if (FEATURE_TARIFFS) {
+    const sub = await ensureSubscription(userId);
+    if (sub && sub.plan.limit_vacancies !== -1) {
+      const { count } = await supabase.from("vacancies").select("id", { count: "exact", head: true }).eq("user_id", userId);
+      if ((count ?? 0) >= sub.plan.limit_vacancies) {
+        return res.status(403).json({ error: "Достигнут лимит вакансий по тарифу." });
+      }
+    }
+  }
   const newVacancy = {
     id: `vac-${Date.now()}`,
     user_id: userId,
@@ -215,6 +277,15 @@ app.get("/candidates", authMiddleware, async (req, res) => {
 
 app.post("/candidates", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
+  if (FEATURE_TARIFFS) {
+    const sub = await ensureSubscription(userId);
+    if (sub && sub.plan.limit_candidates !== -1) {
+      const { count } = await supabase.from("candidates").select("id", { count: "exact", head: true }).eq("user_id", userId);
+      if ((count ?? 0) >= sub.plan.limit_candidates) {
+        return res.status(403).json({ error: "Достигнут лимит кандидатов по тарифу." });
+      }
+    }
+  }
   const newCandidate = {
     id: `cand-${Date.now()}`,
     user_id: userId,
@@ -494,6 +565,65 @@ app.post("/admin/support-reply", authMiddleware, async (req, res) => {
 
 // ---- Auth ----
 
+const FEATURE_EMAIL_VERIFICATION = process.env.FEATURE_EMAIL_VERIFICATION === "true";
+const FEATURE_TARIFFS = process.env.FEATURE_TARIFFS === "true";
+const APP_URL = process.env.APP_URL ?? "https://naymi.tech";
+
+type Plan = {
+  id: string;
+  name: string;
+  slug: string;
+  price_monthly: number;
+  price_yearly: number | null;
+  limit_vacancies: number;
+  limit_candidates: number;
+  ai_matching_enabled: boolean;
+  limit_users: number;
+  priority_support: boolean;
+  integrations_allowed: string[];
+  hidden: boolean;
+};
+
+type SubscriptionWithPlan = {
+  subscription: { status: string; trial_ends_at: string | null; current_period_ends_at: string };
+  plan: Plan;
+};
+
+async function getSubscription(userId: string): Promise<SubscriptionWithPlan | null> {
+  const { data: sub } = await supabase
+    .from("subscriptions")
+    .select("*, plan:plans(*)")
+    .eq("user_id", userId)
+    .limit(1)
+    .single();
+  if (!sub?.plan) return null;
+  return {
+    subscription: {
+      status: sub.status,
+      trial_ends_at: sub.trial_ends_at,
+      current_period_ends_at: sub.current_period_ends_at
+    },
+    plan: sub.plan as Plan
+  };
+}
+
+async function ensureSubscription(userId: string): Promise<SubscriptionWithPlan | null> {
+  let sub = await getSubscription(userId);
+  if (sub) return sub;
+  const { data: freePlan } = await supabase.from("plans").select("id").eq("slug", "free").limit(1).single();
+  if (!freePlan) return null;
+  const trialEnds = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+  const periodEnds = trialEnds;
+  await supabase.from("subscriptions").insert({
+    user_id: userId,
+    plan_id: freePlan.id,
+    status: "trial",
+    trial_ends_at: trialEnds,
+    current_period_ends_at: periodEnds
+  });
+  return getSubscription(userId);
+}
+
 app.post("/auth/register", async (req, res) => {
   const { name, email, password } = req.body ?? {};
   if (!name || !email || !password) {
@@ -525,10 +655,76 @@ app.post("/auth/register", async (req, res) => {
   const { error } = await supabase.from("users").insert(newUser);
   if (error) { res.status(500).json({ error: error.message }); return; }
 
+  if (FEATURE_TARIFFS) {
+    const { data: freePlan } = await supabase.from("plans").select("id").eq("slug", "free").limit(1).single();
+    if (freePlan) {
+      const trialEnds = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+      await supabase.from("subscriptions").insert({
+        user_id: newUser.id,
+        plan_id: freePlan.id,
+        status: "trial",
+        trial_ends_at: trialEnds,
+        current_period_ends_at: trialEnds
+      });
+    }
+  }
+
+  if (FEATURE_EMAIL_VERIFICATION) {
+    const token = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+    await supabase.from("verification_tokens").insert({
+      user_id: newUser.id,
+      token,
+      expires_at: expiresAt
+    });
+    const apiBase = process.env.API_PUBLIC_URL || process.env.VITE_API_URL || APP_URL;
+    const verifyUrl = `${apiBase.replace(/\/$/, "")}/auth/verify?token=${token}`;
+    try {
+      await sendVerificationEmail(normalizedEmail, verifyUrl, newUser.name);
+    } catch (err) {
+      console.error("Ошибка отправки письма верификации:", err);
+    }
+    return res.json({
+      message: "На указанный email отправлено письмо со ссылкой для подтверждения. Проверьте папку «Спам», если письмо не пришло.",
+      requires_verification: true,
+      user: { id: newUser.id, name: newUser.name, email: newUser.email }
+    });
+  }
+
   res.json({
     token: createToken(newUser.email),
     user: { id: newUser.id, name: newUser.name, email: newUser.email }
   });
+});
+
+app.get("/auth/verify", async (req, res) => {
+  const token = String(req.query.token ?? "").trim();
+  if (!token) {
+    return res.redirect(`${APP_URL}/login?error=missing_token`);
+  }
+  const { data: row } = await supabase
+    .from("verification_tokens")
+    .select("user_id")
+    .eq("token", token)
+    .is("used_at", null)
+    .gt("expires_at", new Date().toISOString())
+    .limit(1)
+    .single();
+
+  if (!row) {
+    return res.redirect(`${APP_URL}/login?error=invalid_or_expired`);
+  }
+
+  await supabase
+    .from("verification_tokens")
+    .update({ used_at: new Date().toISOString() })
+    .eq("token", token);
+  await supabase
+    .from("users")
+    .update({ email_verified_at: new Date().toISOString() })
+    .eq("id", row.user_id);
+
+  res.redirect(`${APP_URL}/login?verified=1`);
 });
 
 app.post("/auth/login", async (req, res) => {
@@ -550,6 +746,13 @@ app.post("/auth/login", async (req, res) => {
   if (!user) {
     res.status(401).json({ error: "Неверный email или пароль." });
     return;
+  }
+
+  if (FEATURE_EMAIL_VERIFICATION && !user.email_verified_at) {
+    return res.status(403).json({
+      error: "Подтвердите email",
+      message: "На указанный адрес отправлено письмо с ссылкой для подтверждения."
+    });
   }
 
   res.json({
@@ -738,6 +941,13 @@ app.post("/ai/match/batch", authMiddleware, async (req, res) => {
     return;
   }
 
+  if (FEATURE_TARIFFS) {
+    const sub = await ensureSubscription(userId);
+    if (sub && !sub.plan.ai_matching_enabled) {
+      return res.status(403).json({ error: "AI-матчинг доступен на платных тарифах." });
+    }
+  }
+
   try {
     const [vacRes, candRes] = await Promise.all([
       supabase.from("vacancies").select("*").eq("id", vacancy_id).eq("user_id", userId).single(),
@@ -814,6 +1024,13 @@ app.post("/ai/match/analyze", authMiddleware, async (req, res) => {
       details: "Настройте AI_SERVICE_URL в переменных окружения backend"
     });
     return;
+  }
+
+  if (FEATURE_TARIFFS) {
+    const sub = await ensureSubscription(userId);
+    if (sub && !sub.plan.ai_matching_enabled) {
+      return res.status(403).json({ error: "AI-матчинг доступен на платных тарифах." });
+    }
   }
 
   try {

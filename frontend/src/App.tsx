@@ -99,7 +99,7 @@ type SupportChat = {
 };
  
 const stageOrder = ["Поиск", "Скрининг", "Интервью", "Оффер", "Найм"];
- 
+
 const tabs = [
   { id: "dashboard", label: "Дашборд" },
   { id: "vacancies", label: "Вакансии" },
@@ -109,6 +109,7 @@ const tabs = [
   { id: "matching", label: "ИИ матчинг" },
   { id: "analytics", label: "Аналитика" },
   { id: "integrations", label: "Интеграции" },
+  { id: "tariff", label: "Тариф и оплата" },
   { id: "admin", label: "Администрирование" }
 ];
  
@@ -179,6 +180,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authSuccess, setAuthSuccess] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [authForm, setAuthForm] = useState({
     name: "",
@@ -258,6 +260,23 @@ export default function App() {
   const [integrationApiKey, setIntegrationApiKey] = useState("");
   const [integrationSyncLoading, setIntegrationSyncLoading] = useState<string | null>(null);
   const [integrationConnectLoading, setIntegrationConnectLoading] = useState(false);
+  const [plans, setPlans] = useState<Array<{
+    id: string;
+    name: string;
+    slug: string;
+    price_monthly: number;
+    price_yearly: number | null;
+    limit_vacancies: number | string;
+    limit_candidates: number | string;
+    ai_matching_enabled: boolean;
+    limit_users: number;
+    priority_support: boolean;
+    integrations_allowed: string[];
+  }>>([]);
+  const [subscription, setSubscription] = useState<{
+    subscription: { status: string; trial_ends_at: string | null; current_period_ends_at: string };
+    plan: { name: string; slug: string; price_monthly: number; limit_vacancies: number | string; limit_candidates: number | string; ai_matching_enabled: boolean };
+  } | null>(null);
  
   useEffect(() => {
     if (!token) {
@@ -340,6 +359,25 @@ export default function App() {
       }
     }
   }, []);
+
+  useEffect(() => {
+    if (token) return;
+    const params = new URLSearchParams(window.location.search);
+    const verified = params.get("verified");
+    const err = params.get("error");
+    if (verified === "1") {
+      setAuthSuccess("Email подтверждён. Войдите в систему.");
+      window.history.replaceState({}, "", window.location.pathname + window.location.hash);
+    }
+    if (err === "invalid_or_expired") {
+      setAuthError("Ссылка подтверждения недействительна или истекла.");
+      window.history.replaceState({}, "", window.location.pathname + window.location.hash);
+    }
+    if (err === "missing_token") {
+      setAuthError("Не указан токен подтверждения.");
+      window.history.replaceState({}, "", window.location.pathname + window.location.hash);
+    }
+  }, [token]);
  
  
   useEffect(() => {
@@ -564,7 +602,31 @@ export default function App() {
       loadChats();
     }
   }, [activeTab, isAdmin, token]);
- 
+
+  useEffect(() => {
+    if (activeTab !== "tariff" || !token) return;
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const loadTariff = async () => {
+      try {
+        const [plansRes, subRes] = await Promise.all([
+          fetch(`${apiBase}/plans`),
+          fetch(`${apiBase}/subscription`, { headers: { Authorization: `Bearer ${token}` } })
+        ]);
+        if (plansRes.ok) {
+          const j = (await plansRes.json()) as { data: typeof plans };
+          setPlans(j.data ?? []);
+        }
+        if (subRes.ok) {
+          const j = (await subRes.json()) as { data: typeof subscription };
+          setSubscription(j.data ?? null);
+        }
+      } catch {
+        // ignore
+      }
+    };
+    loadTariff();
+  }, [activeTab, token]);
+
   const calendarMonthLabel = calendarDate.toLocaleDateString("ru-RU", {
     month: "long",
     year: "numeric"
@@ -1054,6 +1116,7 @@ export default function App() {
   const handleAuthSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setAuthError(null);
+    setAuthSuccess(null);
     setAuthLoading(true);
     const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
  
@@ -1079,12 +1142,22 @@ export default function App() {
         token?: string;
         user?: AuthUser;
         error?: string;
+        message?: string;
+        requires_verification?: boolean;
       };
- 
-      if (!response.ok || !json.token || !json.user) {
-        throw new Error(json.error ?? "Ошибка авторизации.");
+
+      if (json.requires_verification) {
+        setAuthError(null);
+        setAuthForm({ name: "", email: json.user?.email ?? "", password: "" });
+        setAuthMode("login");
+        setAuthSuccess(json.message ?? "Проверьте почту и подтвердите регистрацию.");
+        return;
       }
- 
+
+      if (!response.ok || !json.token || !json.user) {
+        throw new Error(json.error ?? json.message ?? "Ошибка авторизации.");
+      }
+
       setToken(json.token);
       setCurrentUser(json.user);
       localStorage.setItem("naymi_token", json.token);
@@ -1355,6 +1428,7 @@ export default function App() {
                 required
               />
             </label>
+            {authSuccess ? <p className="auth-success">{authSuccess}</p> : null}
             {authError ? <p className="auth-error">{authError}</p> : null}
             <button className="primary-btn" type="submit" disabled={authLoading}>
               {authLoading
@@ -1928,47 +2002,27 @@ export default function App() {
                   
                   setAiMatchingLoading(true);
                   setAiMatchingError(null);
-                  const aiApiBase = import.meta.env.VITE_AI_URL ?? "http://localhost:8001";
+                  const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
                   
                   try {
-                    const response = await fetch(`${aiApiBase}/api/match/batch`, {
+                    const response = await fetch(`${apiBase}/ai/match/batch`, {
                       method: "POST",
-                      headers: { "Content-Type": "application/json" },
+                      headers: {
+                        Authorization: `Bearer ${token}`,
+                        "Content-Type": "application/json"
+                      },
                       body: JSON.stringify({
                         vacancy_id: selectedVacancyForMatching,
-                        auto_save: false
+                        auto_save: true
                       })
                     });
                     
-                    if (!response.ok) {
-                      throw new Error(`AI сервис вернул ошибку: ${response.status}`);
-                    }
-                    
                     const data = await response.json();
+                    if (!response.ok) {
+                      throw new Error(data.error ?? data.details ?? `Ошибка ${response.status}`);
+                    }
                     setAiMatches(data.matches || []);
-                    
                     if (data.matches && data.matches.length > 0) {
-                      const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
-                      const savePromises = data.matches
-                        .filter((m: AIMatchResult) => m.score >= 4.0)
-                        .map((m: AIMatchResult) =>
-                          fetch(`${apiBase}/matches`, {
-                            method: "POST",
-                            headers: {
-                              Authorization: `Bearer ${token}`,
-                              "Content-Type": "application/json"
-                            },
-                            body: JSON.stringify({
-                              candidateId: m.candidate_id,
-                              vacancyId: m.vacancy_id,
-                              score: m.score / 10,
-                              explanation: m.explanation
-                            })
-                          })
-                        );
-                      
-                      await Promise.all(savePromises);
-                      
                       const matchRes = await fetch(`${apiBase}/matches`, {
                         headers: { Authorization: `Bearer ${token}` }
                       });
@@ -1993,9 +2047,6 @@ export default function App() {
             {aiMatchingError ? (
               <div className="error-banner">
                 {aiMatchingError}
-                <div className="muted">
-                  Убедитесь, что AI-сервис запущен: cd ai && python app.py
-                </div>
               </div>
             ) : null}
             
@@ -2559,6 +2610,45 @@ export default function App() {
               Добавить API ключ
             </button>
           </div>
+        </section>
+      ) : null}
+
+      {activeTab === "tariff" ? (
+        <section className="grid">
+          <div className="card" style={{ gridColumn: "1 / -1" }}>
+            <h3>Тариф и оплата</h3>
+            {subscription ? (
+              <p className="muted">
+                Текущий тариф: <strong>{subscription.plan.name}</strong>
+                {subscription.subscription.status === "trial" && subscription.subscription.trial_ends_at && (
+                  <> · Пробный период до {new Date(subscription.subscription.trial_ends_at).toLocaleDateString("ru-RU")}</>
+                )}
+              </p>
+            ) : (
+              <p className="muted">Тарифы отключены. Текущий функционал доступен без ограничений.</p>
+            )}
+          </div>
+          {plans.length > 0 && plans.map((plan) => (
+            <div key={plan.id} className="card">
+              <h4>{plan.name}</h4>
+              <p>
+                <strong>{plan.price_monthly === 0 ? "Бесплатно" : `₽${plan.price_monthly}/мес`}</strong>
+                {plan.price_yearly != null && plan.price_yearly > 0 && (
+                  <span className="muted"> · {plan.price_yearly} ₽/год</span>
+                )}
+              </p>
+              <ul className="funnel">
+                <li>Вакансий: {plan.limit_vacancies}</li>
+                <li>Кандидатов: {plan.limit_candidates}</li>
+                <li>ИИ-матчинг: {plan.ai_matching_enabled ? "Да" : "Нет"}</li>
+                <li>Пользователей: {plan.limit_users === -1 ? "∞" : plan.limit_users}</li>
+                {plan.priority_support && <li>Приоритетная поддержка</li>}
+              </ul>
+              {subscription?.plan.slug === plan.slug && (
+                <span className="pill">Текущий тариф</span>
+              )}
+            </div>
+          ))}
         </section>
       ) : null}
  
