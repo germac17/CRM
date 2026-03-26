@@ -141,7 +141,19 @@ function getApiBase(): string {
   const fromEnv = (import.meta.env.VITE_API_URL || "").trim();
   if (fromEnv) return fromEnv.replace(/\/$/, "");
   if (import.meta.env.DEV) return "http://localhost:4000";
-  if (typeof window !== "undefined") return window.location.origin;
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    const onVercelRuntime =
+      host.endsWith(".vercel.app") ||
+      host === "vercel.app" ||
+      import.meta.env.VITE_VERCEL === true;
+    if (import.meta.env.PROD && onVercelRuntime) {
+      throw new Error(
+        "Не задан VITE_API_URL. В Vercel: Settings → Environment Variables → добавьте VITE_API_URL = публичный URL вашего backend (https://…), Environment = Production, затем Redeploy. Статика на Vercel не содержит API."
+      );
+    }
+    return window.location.origin;
+  }
   return "http://localhost:4000";
 }
 
