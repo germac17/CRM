@@ -1,5 +1,5 @@
 -- Миграция: интеграции и поле source
--- Запустите в Supabase SQL Editor если таблицы уже существуют
+-- Запустите в PostgreSQL если таблицы уже существуют
 
 -- Добавить source в vacancies и candidates (если колонки нет)
 ALTER TABLE vacancies ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual';

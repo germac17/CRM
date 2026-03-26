@@ -2,6 +2,7 @@
 Векторизация текста для ML алгоритмов
 """
 import numpy as np
+import requests
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import config
@@ -24,6 +25,63 @@ class Vectorizer:
         self.sentence_model = None
         self._load_sentence_transformer()
     
+    def _has_ollama_config(self) -> bool:
+        return bool(config.OLLAMA_BASE_URL and config.OLLAMA_MODEL)
+    
+    def _get_ollama_headers(self) -> dict:
+        headers = {"Content-Type": "application/json"}
+        if config.OLLAMA_API_KEY:
+            headers["Authorization"] = f"Bearer {config.OLLAMA_API_KEY}"
+        return headers
+    
+    def _vectorize_ollama(self, texts: list[str]) -> np.ndarray | None:
+        """
+        Векторизация через Ollama API.
+        Поддерживает /api/embed (новый) и /api/embeddings (совместимость).
+        """
+        if not texts or not self._has_ollama_config():
+            return None
+        
+        base = config.OLLAMA_BASE_URL.rstrip("/")
+        headers = self._get_ollama_headers()
+        
+        # 1) Новый endpoint: /api/embed
+        try:
+            response = requests.post(
+                f"{base}/api/embed",
+                json={"model": config.OLLAMA_MODEL, "input": texts},
+                headers=headers,
+                timeout=config.OLLAMA_TIMEOUT_SEC
+            )
+            if response.ok:
+                payload = response.json()
+                embeddings = payload.get("embeddings")
+                if isinstance(embeddings, list) and embeddings:
+                    return np.array(embeddings, dtype=float)
+        except Exception:
+            pass
+        
+        # 2) Старый endpoint: /api/embeddings (по одному тексту)
+        vectors = []
+        try:
+            for text in texts:
+                response = requests.post(
+                    f"{base}/api/embeddings",
+                    json={"model": config.OLLAMA_MODEL, "prompt": text},
+                    headers=headers,
+                    timeout=config.OLLAMA_TIMEOUT_SEC
+                )
+                if not response.ok:
+                    return None
+                payload = response.json()
+                embedding = payload.get("embedding")
+                if not isinstance(embedding, list) or not embedding:
+                    return None
+                vectors.append(embedding)
+            return np.array(vectors, dtype=float) if vectors else None
+        except Exception:
+            return None
+    
     def _load_sentence_transformer(self):
         """Загрузка Sentence Transformer модели"""
         try:
@@ -31,10 +89,13 @@ class Vectorizer:
             self.sentence_model = SentenceTransformer(
                 config.SENTENCE_TRANSFORMER_MODEL
             )
-            print(f"✓ Загружена модель: {config.SENTENCE_TRANSFORMER_MODEL}")
+            print(f"[OK] Loaded model: {config.SENTENCE_TRANSFORMER_MODEL}")
         except Exception as e:
-            print(f"⚠️ Не удалось загрузить Sentence Transformer: {e}")
-            print("Будет использоваться только TF-IDF")
+            print(f"[WARN] Sentence Transformer load failed: {e}")
+            if self._has_ollama_config():
+                print("[WARN] Falling back to Ollama embeddings")
+            else:
+                print("[WARN] Falling back to TF-IDF only")
             self.sentence_model = None
     
     def vectorize_tfidf(self, texts: list[str]) -> np.ndarray:
@@ -85,7 +146,10 @@ class Vectorizer:
             Матрица эмбеддингов
         """
         if not self.sentence_model:
-            print("⚠️ Sentence Transformer не доступен, используем TF-IDF")
+            ollama_vectors = self._vectorize_ollama(texts)
+            if ollama_vectors is not None:
+                return ollama_vectors
+            print("[WARN] Semantic backend unavailable, using TF-IDF")
             return self.vectorize_tfidf(texts)
         
         try:
@@ -97,7 +161,18 @@ class Vectorizer:
             return embeddings
         except Exception as e:
             print(f"Ошибка семантической векторизации: {e}")
+            ollama_vectors = self._vectorize_ollama(texts)
+            if ollama_vectors is not None:
+                return ollama_vectors
             return self.vectorize_tfidf(texts)
+    
+    def get_semantic_backend(self) -> str:
+        """Текущий backend для semantic-векторизации."""
+        if self.sentence_model is not None:
+            return "sentence-transformer"
+        if self._has_ollama_config():
+            return "ollama"
+        return "tfidf"
     
     def calculate_similarity(
         self,
@@ -116,7 +191,7 @@ class Vectorizer:
         Returns:
             Сходство (0.0-1.0)
         """
-        if method == "semantic" and self.sentence_model:
+        if method == "semantic" and (self.sentence_model or self._has_ollama_config()):
             # Семантическое сходство
             embeddings = self.vectorize_semantic([text1, text2])
             similarity = cosine_similarity(
@@ -157,7 +232,7 @@ class Vectorizer:
         if not corpus_texts:
             return []
         
-        if method == "semantic" and self.sentence_model:
+        if method == "semantic" and (self.sentence_model or self._has_ollama_config()):
             # Семантическое сходство
             all_texts = [query_text] + corpus_texts
             embeddings = self.vectorize_semantic(all_texts)

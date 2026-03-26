@@ -153,7 +153,9 @@ def health_check():
     return {
         "status": "ok",
         "service": "hr-crm-ai",
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "semantic_backend": matcher_service.vectorizer.get_semantic_backend(),
+        "ollama_model": config.OLLAMA_MODEL if matcher_service.vectorizer.get_semantic_backend() == "ollama" else None
     }
 
 
@@ -189,7 +191,7 @@ def analyze_single_match(request: MatchRequest):
 def analyze_batch_match_with_data(request: BatchMatchWithDataRequest):
     """
     Массовый матчинг с данными в теле запроса.
-    Используется для remote-режима: backend передаёт vacancy и candidates из Supabase.
+    Используется для remote-режима: backend передаёт vacancy и candidates из БД.
     """
     try:
         vacancy = Vacancy(**request.vacancy)

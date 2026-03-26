@@ -157,6 +157,174 @@ body {
   gap: 16px;
   margin-bottom: 24px;
 }
+
+.dashboard-intro h2 {
+  margin: 0;
+  font-size: 40px;
+  font-weight: 800;
+  color: #111827;
+}
+
+.dashboard-intro .muted {
+  margin: 6px 0 18px;
+  color: #6b7280;
+}
+
+.dashboard-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.dashboard-kpi-card {
+  min-height: 108px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.dashboard-kpi-card h2 {
+  margin: 0;
+  font-size: 34px;
+  line-height: 1.1;
+  color: #111827;
+}
+
+.dashboard-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: 16px;
+}
+
+.dashboard-dynamics-card {
+  min-height: 420px;
+}
+
+.dashboard-line-chart {
+  margin-top: 12px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 14px 14px 10px;
+}
+
+.dashboard-line-chart svg {
+  width: 100%;
+  height: 290px;
+  display: block;
+  border-left: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.dashboard-line-chart .line-primary,
+.dashboard-line-chart .line-secondary {
+  fill: none;
+  stroke-width: 2.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.dashboard-line-chart .line-primary {
+  stroke: #2563eb;
+}
+
+.dashboard-line-chart .line-secondary {
+  stroke: #10b981;
+}
+
+.chart-legend {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-top: 10px;
+  font-size: 13px;
+  color: #334155;
+}
+
+.chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.dot-primary {
+  background: #2563eb;
+}
+
+.dot-secondary {
+  background: #10b981;
+}
+
+.chart-months {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  font-size: 12px;
+  color: #64748b;
+  text-transform: capitalize;
+}
+
+.dashboard-latest-card {
+  min-height: 420px;
+}
+
+.dashboard-latest-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.link-btn {
+  background: transparent;
+  border: none;
+  color: #2563eb;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.dashboard-latest-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.dashboard-latest-list li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.dashboard-latest-list li:last-child {
+  border-bottom: none;
+}
+
+.candidate-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
  
 .grid {
   display: grid;
@@ -382,6 +550,251 @@ body {
   gap: 8px;
   justify-content: flex-end;
   margin-top: 8px;
+}
+
+/* Vacancy modal: wider, scrollable */
+.modal-vacancy {
+  max-width: 640px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+.modal-vacancy .modal-body {
+  overflow-y: auto;
+  padding-right: 6px;
+  scrollbar-gutter: stable;
+}
+.modal-vacancy .modal-header h3 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #0f172a;
+}
+
+.vacancy-section {
+  margin-bottom: 22px;
+  padding-bottom: 2px;
+}
+.vacancy-section:last-of-type {
+  margin-bottom: 0;
+}
+.vacancy-section h4 {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: #0f172a;
+}
+.vacancy-section .muted.small {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+  color: #64748b;
+}
+.vacancy-section .field {
+  margin-top: 0;
+}
+.vacancy-subtitle {
+  margin-top: 8px !important;
+}
+
+.segment-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.segment-btn {
+  min-height: 40px;
+  padding: 9px 16px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  color: #0f172a;
+  transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease;
+}
+.segment-btn:hover {
+  border-color: var(--naymi-primary-light);
+  background: #f0fdfa;
+}
+.segment-btn.active {
+  border-color: var(--naymi-primary);
+  background: var(--naymi-primary);
+  color: #fff;
+}
+
+.chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip-group.indent {
+  margin-left: 12px;
+  margin-top: 8px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 38px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  color: #0f172a;
+  transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease;
+}
+.chip:hover {
+  border-color: var(--naymi-primary-light);
+  background: #f0fdfa;
+}
+.chip.active {
+  border-color: var(--naymi-primary);
+  background: var(--naymi-primary);
+  color: #fff;
+}
+.chip button {
+  margin: 0;
+  padding: 0 2px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.8;
+}
+.chip button:hover {
+  opacity: 1;
+}
+.chip-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+  color: #0f172a;
+  transition: border-color 0.16s ease, background-color 0.16s ease;
+}
+.chip-label:hover {
+  border-color: var(--naymi-primary-light);
+  background: #f0fdfa;
+}
+.chip-label input {
+  margin: 0;
+}
+
+.toggle-rows {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.toggle-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 4px 12px;
+  align-items: center;
+  min-height: 64px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e2e8f0;
+  cursor: pointer;
+  background: #fff;
+  transition: background-color 0.16s ease;
+}
+.toggle-row:hover {
+  background: #f8fafc;
+}
+.toggle-row:last-child {
+  border-bottom: none;
+}
+.toggle-row span:first-child {
+  grid-column: 1;
+  grid-row: 1;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.toggle-row .muted.small {
+  grid-column: 1;
+  grid-row: 2;
+  margin: 0;
+}
+.toggle-row input[type="checkbox"] {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  margin: 0;
+  width: 40px;
+  height: 22px;
+  accent-color: var(--naymi-primary);
+}
+
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+}
+.field-row .field {
+  flex: 1;
+  min-width: 80px;
+}
+.field-row .field select {
+  min-width: 100px;
+}
+.mt-8 {
+  margin-top: 8px;
+}
+
+.modal-vacancy .field {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.modal-vacancy .field input,
+.modal-vacancy .field select,
+.modal-vacancy .field textarea {
+  min-height: 42px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: #0f172a;
+  background: #ffffff;
+  border-color: #dbe3ef;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
+}
+.modal-vacancy .field textarea {
+  min-height: 132px;
+  resize: vertical;
+}
+.modal-vacancy .field input::placeholder,
+.modal-vacancy .field textarea::placeholder {
+  color: #94a3b8;
+}
+.modal-vacancy .field input:focus,
+.modal-vacancy .field select:focus,
+.modal-vacancy .field textarea:focus {
+  outline: none;
+  border-color: var(--naymi-primary);
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.12);
 }
  
 .form-grid {
@@ -747,6 +1160,15 @@ body {
 }
  
 @media (max-width: 1024px) {
+  .dashboard-main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-dynamics-card,
+  .dashboard-latest-card {
+    min-height: auto;
+  }
+
   .sidebar {
     position: fixed;
     top: 0;

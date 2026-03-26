@@ -1,5 +1,5 @@
 # Запуск Найми (локальная разработка)
-# Один хост: backend + frontend; AI — опционально
+# Backend при старте сам запускает AI-сервис (порт 8001)
 
 $ErrorActionPreference = "Stop"
 Write-Host "Найми — запуск локально" -ForegroundColor Cyan
@@ -9,7 +9,7 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-Write-Host "Backend (порт 4000)..." -ForegroundColor Yellow
+Write-Host "Backend (порт 4000) + AI-сервис (8001)..." -ForegroundColor Yellow
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PSScriptRoot\backend'; npm run dev"
 Start-Sleep -Seconds 2
 
@@ -18,7 +18,5 @@ Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PSScriptRoot
 
 Write-Host ""
 Write-Host "Откройте: http://localhost:3000" -ForegroundColor Green
-Write-Host "API: http://localhost:4000/health" -ForegroundColor Gray
+Write-Host "API: http://localhost:4000/health | AI: http://localhost:8001 (запускается с backend)" -ForegroundColor Gray
 Write-Host "Логин: admin@crm.ru / admin" -ForegroundColor Gray
-Write-Host ""
-Write-Host "AI-матчинг (опционально): cd ai; python app.py (порт 8001). Затем в backend .env задайте AI_SERVICE_URL=http://localhost:8001" -ForegroundColor Gray

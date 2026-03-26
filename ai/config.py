@@ -3,6 +3,9 @@
 """
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Paths
 BASE_DIR = Path(__file__).parent
@@ -18,6 +21,12 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:4000")
 # NLP Models
 SPACY_MODEL = "ru_core_news_md"  # или ru_core_news_lg для production
 SENTENCE_TRANSFORMER_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
+
+# Ollama fallback (optional)
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "nomic-embed-text")
+OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "")
+OLLAMA_TIMEOUT_SEC = int(os.getenv("OLLAMA_TIMEOUT_SEC", "15"))
 
 # Matching Settings
 MIN_SCORE = 1.0

@@ -1,0 +1,9 @@
+[
+  {
+    "user_id": "usr-admin",
+    "plan_id": "starter",
+    "status": "trial",
+    "trial_ends_at": "2026-04-05T19:17:05.189Z",
+    "current_period_ends_at": "2026-04-05T19:17:05.189Z"
+  }
+]

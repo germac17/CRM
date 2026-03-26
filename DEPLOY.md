@@ -1,16 +1,14 @@
 # Развёртывание на одном хосте
 
-Приложение рассчитано на один сервер: backend отдаёт API и собранный фронтенд, база — Supabase (облако) или своя PostgreSQL.
+Приложение рассчитано на один сервер: backend отдаёт API и собранный фронтенд. По умолчанию данные хранятся в JSON (`backend/data/`). При деплое можно подключить PostgreSQL.
 
 ## 1. Подготовка
 
 - Node.js 18+
-- Аккаунт [Supabase](https://supabase.com) (или своя БД)
 
 ## 2. База данных
 
-В [Supabase](https://supabase.com) создайте проект и выполните миграции из `backend/migrations/` в порядке имён (001, 002, 003, …).  
-Скопируйте **Project URL** и **service_role key** в `.env` backend.
+По умолчанию используется JSON-хранилище в `backend/data/`. Для production можно использовать PostgreSQL — выполните миграции из `backend/migrations/` в порядке имён (001, 002, 003, …).
 
 ## 3. Настройка backend
 
@@ -19,8 +17,6 @@
 ```env
 PORT=4000
 NODE_ENV=production
-SUPABASE_URL=https://ваш-проект.supabase.co
-SUPABASE_KEY=ваш_service_role_ключ
 
 # Один хост: ваш домен или http://IP:4000
 APP_URL=https://ваш-домен.ru

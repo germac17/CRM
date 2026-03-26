@@ -1,6 +1,6 @@
 -- =============================================
--- Найми - Supabase Schema
--- Запустите этот SQL в Supabase Dashboard → SQL Editor
+-- Найми - PostgreSQL Schema
+-- Для миграции на PostgreSQL при деплое
 -- =============================================
 
 CREATE TABLE IF NOT EXISTS users (

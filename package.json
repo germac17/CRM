@@ -5,6 +5,7 @@
     "cross-env": "^7.0.3"
   },
   "scripts": {
+    "predev": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$ports=@(3000,4000,8001); foreach($port in $ports){ $pids=(Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique); foreach($procId in ($pids | Where-Object { $_ -and $_ -ne 0 })) { try { Stop-Process -Id $procId -Force -ErrorAction Stop } catch {} } }; exit 0\"",
     "dev": "npx concurrently -n \"backend,frontend\" -c \"blue,magenta\" \"npm run dev:backend\" \"npm run dev:frontend\"",
     "dev:backend": "cd backend && npm run dev",
     "dev:frontend": "cd frontend && npm run dev",

@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "id": "comm-1774206788679",
+    "user_id": "usr-admin",
+    "channel": "Email",
+    "template": "Письма",
+    "audience": "Вакансия аналитика",
+    "status": "Запланировано"
+  }
+]

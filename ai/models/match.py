@@ -47,7 +47,7 @@ class BatchMatchRequest(BaseModel):
 
 
 class BatchMatchWithDataRequest(BaseModel):
-    """Запрос на массовый матчинг с данными (для remote — backend передаёт данные из Supabase)"""
+    """Запрос на массовый матчинг с данными (для remote — backend передаёт данные из БД)"""
     
     vacancy: dict  # Vacancy
     candidates: list[dict]  # list[Candidate]

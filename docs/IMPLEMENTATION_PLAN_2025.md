@@ -1,7 +1,7 @@
 # План внедрения: монетизация, AI-матчинг, верификация
 
 **Проект:** Найми (naymi.tech)  
-**Стек:** React, Node.js/Express, Supabase, Python AI  
+**Стек:** React, Node.js/Express, JSON/PostgreSQL, Python AI  
 **Статус:** Production, три блока доработок
 
 ---

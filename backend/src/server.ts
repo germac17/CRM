@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { spawn } from "child_process";
 import cors from "cors";
 import crypto from "crypto";
 import express from "express";
@@ -7,11 +8,63 @@ import helmet from "helmet";
 import morgan from "morgan";
 import path from "path";
 import { fileURLToPath } from "url";
-import { supabase } from "./supabase.js";
+import * as db from "./db.js";
 import { getBotResponse } from "./support-bot.js";
 import { sendVerificationEmail } from "./mail.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const AI_PORT = 8001;
+const DEFAULT_AI_URL = `http://localhost:${AI_PORT}`;
+
+function startAiService(): void {
+  const aiUrl = process.env.AI_SERVICE_URL?.trim() || "";
+  if (aiUrl && !aiUrl.includes("localhost") && !aiUrl.includes("127.0.0.1")) {
+    return;
+  }
+  const aiDir = path.resolve(__dirname, "..", "..", "ai");
+  if (!fs.existsSync(path.join(aiDir, "app.py"))) {
+    return;
+  }
+  process.env.AI_SERVICE_URL = DEFAULT_AI_URL;
+  const candidates: Array<{ cmd: string; args: string[]; label: string }> =
+    process.platform === "win32"
+      ? [
+          { cmd: "py", args: ["-3", "app.py"], label: "py -3" },
+          { cmd: "python", args: ["app.py"], label: "python" },
+          { cmd: "python3", args: ["app.py"], label: "python3" }
+        ]
+      : [
+          { cmd: "python3", args: ["app.py"], label: "python3" },
+          { cmd: "python", args: ["app.py"], label: "python" }
+        ];
+
+  const env = { ...process.env, PORT: String(AI_PORT), PYTHONIOENCODING: "utf-8" };
+
+  const trySpawn = (index: number): void => {
+    const c = candidates[index];
+    if (!c) {
+      console.warn("AI-сервис не запущен: не найден Python (py/python/python3). Установите Python и зависимости в папке ai/.");
+      return;
+    }
+    const child = spawn(c.cmd, c.args, { cwd: aiDir, stdio: "ignore", detached: false, env });
+    child.on("error", (err: any) => {
+      if (err?.code === "ENOENT") {
+        trySpawn(index + 1);
+        return;
+      }
+      console.warn("AI-сервис не запущен:", err?.message ?? String(err));
+    });
+    child.on("exit", (code) => {
+      if (code != null && code !== 0) {
+        console.warn("AI-сервис завершился с кодом", code);
+      }
+    });
+    console.log(`AI-сервис запускается (${c.label}) на порту`, AI_PORT);
+  };
+
+  trySpawn(0);
+}
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
@@ -46,6 +99,7 @@ type Vacancy = {
   department: string;
   location: string;
   status: string;
+  details?: Record<string, unknown>;
 };
 
 type Candidate = {
@@ -94,6 +148,38 @@ type SupportMessage = {
   timestamp: string;
 };
 
+const localDataDir = path.resolve(__dirname, "..", "data");
+
+function getLocalVacanciesPath(userId: string): string {
+  return path.join(localDataDir, `user-${userId}-vacancies.json`);
+}
+
+function readLocalVacancies(userId: string): Vacancy[] {
+  try {
+    const filePath = getLocalVacanciesPath(userId);
+    if (!fs.existsSync(filePath)) return [];
+    const raw = fs.readFileSync(filePath, "utf-8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as Vacancy[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalVacancies(userId: string, vacancies: Vacancy[]): void {
+  try {
+    if (!fs.existsSync(localDataDir)) {
+      fs.mkdirSync(localDataDir, { recursive: true });
+    }
+    fs.writeFileSync(getLocalVacanciesPath(userId), JSON.stringify(vacancies, null, 2), "utf-8");
+  } catch {
+    // Silent fallback storage error: API should keep working with DB path.
+  }
+}
+
+const ADMIN_EMAIL = "admin@crm.ru";
+const ADMIN_ID = "usr-admin";
+
 const getUserIdFromToken = (token: string): string | null => {
   try {
     const decoded = Buffer.from(token, "base64").toString("utf-8");
@@ -108,30 +194,36 @@ const createToken = (email: string) => {
   return Buffer.from(`${email}:${Date.now()}`).toString("base64");
 };
 
+async function getOrCreateAdmin(): Promise<User> {
+  const row = db.getUserById(ADMIN_ID) as User | undefined;
+  if (row) return row;
+  const password = process.env.ADMIN_PASSWORD ?? "admin";
+  const admin: User = {
+    id: ADMIN_ID,
+    name: "Администратор",
+    email: ADMIN_EMAIL,
+    password,
+    email_verified_at: new Date().toISOString()
+  };
+  db.upsertUser(admin);
+  return admin;
+}
+
 const authMiddleware = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    res.status(401).json({ error: "Требуется авторизация." });
-    return;
+  let user: User | undefined;
+
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.replace("Bearer ", "");
+    const email = getUserIdFromToken(token);
+    if (email) {
+      user = db.getUserByEmail(email) as User | undefined;
+    }
   }
 
-  const token = authHeader.replace("Bearer ", "");
-  const email = getUserIdFromToken(token);
-  if (!email) {
-    res.status(401).json({ error: "Неверный токен." });
-    return;
-  }
-
-  const { data: users } = await supabase
-    .from("users")
-    .select("*")
-    .eq("email", email)
-    .limit(1);
-
-  const user = users?.[0] as User | undefined;
   if (!user) {
-    res.status(401).json({ error: "Пользователь не найден." });
-    return;
+    // Для однопользовательского режима всегда есть админ
+    user = await getOrCreateAdmin();
   }
 
   (req as any).userId = user.id;
@@ -145,7 +237,7 @@ const isAdmin = (req: express.Request): boolean =>
 // ---- Health ----
 
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "naymi-backend", db: "supabase" });
+  res.json({ status: "ok", service: "naymi-backend", db: "json" });
 });
 
 // ---- Plans & Subscription ----
@@ -157,29 +249,23 @@ const DEFAULT_PLANS = [
 ];
 
 app.get("/plans", async (_req, res) => {
-  try {
-    const { data } = await supabase
-      .from("plans")
-      .select("*")
-      .eq("hidden", false)
-      .order("price_monthly", { ascending: true });
-    if (data && data.length > 0) {
-      const plans = data.map((p: any) => ({
-        id: p.id,
-        name: p.name,
-        slug: p.slug,
-        price_monthly: Number(p.price_monthly),
-        price_yearly: p.price_yearly != null ? Number(p.price_yearly) : null,
-        limit_vacancies: p.limit_vacancies === -1 ? "∞" : p.limit_vacancies,
-        limit_candidates: p.limit_candidates === -1 ? "∞" : p.limit_candidates,
-        ai_matching_enabled: p.ai_matching_enabled,
-        limit_users: p.limit_users,
-        priority_support: p.priority_support,
-        integrations_allowed: p.integrations_allowed ?? []
-      }));
-      return res.json({ data: plans });
-    }
-  } catch (_) { /* table may not exist */ }
+  const stored = db.getPlans().filter((p: any) => !p.hidden);
+  if (stored.length > 0) {
+    const plans = stored.map((p: any) => ({
+      id: p.id,
+      name: p.name,
+      slug: p.slug,
+      price_monthly: Number(p.price_monthly),
+      price_yearly: p.price_yearly != null ? Number(p.price_yearly) : null,
+      limit_vacancies: p.limit_vacancies === -1 ? "∞" : p.limit_vacancies,
+      limit_candidates: p.limit_candidates === -1 ? "∞" : p.limit_candidates,
+      ai_matching_enabled: p.ai_matching_enabled,
+      limit_users: p.limit_users,
+      priority_support: p.priority_support,
+      integrations_allowed: p.integrations_allowed ?? []
+    }));
+    return res.json({ data: plans });
+  }
   const plans = DEFAULT_PLANS.map((p) => ({
     ...p,
     limit_vacancies: p.limit_vacancies === -1 ? "∞" : p.limit_vacancies,
@@ -199,9 +285,12 @@ app.get("/subscription", authMiddleware, async (req, res) => {
 
 app.get("/vacancies", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
-  const { data } = await supabase.from("vacancies").select("*").eq("user_id", userId);
-  const vacancies = (data ?? []).map(({ user_id, created_at, ...rest }) => rest);
-  res.json({ data: vacancies });
+  const vacancies = db.getVacancies(userId).map(({ user_id, created_at, ...rest }: any) => rest);
+  const local = readLocalVacancies(userId).map(({ user_id, ...rest }: any) => rest);
+  const merged = new Map<string, any>();
+  for (const v of local) merged.set(String(v.id), v);
+  for (const v of vacancies) merged.set(String(v.id), v);
+  res.json({ data: Array.from(merged.values()) });
 });
 
 app.post("/vacancies", authMiddleware, async (req, res) => {
@@ -209,8 +298,8 @@ app.post("/vacancies", authMiddleware, async (req, res) => {
   if (FEATURE_TARIFFS && !isAdmin(req)) {
     const sub = await ensureSubscription(userId);
     if (sub && sub.plan.limit_vacancies !== -1) {
-      const { count } = await supabase.from("vacancies").select("id", { count: "exact", head: true }).eq("user_id", userId);
-      if ((count ?? 0) >= sub.plan.limit_vacancies) {
+      const count = db.countVacancies(userId);
+      if (count >= sub.plan.limit_vacancies) {
         return res.status(403).json({ error: "Достигнут лимит вакансий по тарифу." });
       }
     }
@@ -221,39 +310,50 @@ app.post("/vacancies", authMiddleware, async (req, res) => {
     title: String(req.body.title ?? ""),
     department: String(req.body.department ?? ""),
     location: String(req.body.location ?? ""),
-    status: String(req.body.status ?? "open")
+    status: String(req.body.status ?? "open"),
+    details: req.body.details && typeof req.body.details === "object" ? req.body.details : {}
   };
-  const { data, error } = await supabase.from("vacancies").insert(newVacancy).select().single();
-  if (error) { res.status(500).json({ error: error.message }); return; }
-  const { user_id, created_at, ...clean } = data;
+  db.insertVacancy(userId, newVacancy);
+  const localVacancies = readLocalVacancies(userId).filter((item) => item.id !== newVacancy.id);
+  writeLocalVacancies(userId, localVacancies);
+  const { user_id, ...clean } = newVacancy;
   res.json({ data: clean });
 });
 
 app.put("/vacancies/:id", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
-  const updates: Record<string, string> = {};
+  const updates: Record<string, string | object> = {};
   if (req.body.title != null) updates.title = String(req.body.title);
   if (req.body.department != null) updates.department = String(req.body.department);
   if (req.body.location != null) updates.location = String(req.body.location);
   if (req.body.status != null) updates.status = String(req.body.status);
+  if (req.body.details != null && typeof req.body.details === "object") updates.details = req.body.details;
 
-  const { data, error } = await supabase
-    .from("vacancies")
-    .update(updates)
-    .eq("id", req.params.id)
-    .eq("user_id", userId)
-    .select()
-    .single();
-
-  if (error || !data) { res.status(404).json({ error: "Вакансия не найдена." }); return; }
+  const data = db.updateVacancy(userId, req.params.id, updates);
+  if (!data) {
+    const localVacancies = readLocalVacancies(userId);
+    const index = localVacancies.findIndex((item) => item.id === req.params.id);
+    if (index === -1) {
+      res.status(404).json({ error: "Вакансия не найдена." });
+      return;
+    }
+    const updatedLocal = { ...localVacancies[index], ...(updates as any) };
+    localVacancies[index] = updatedLocal;
+    writeLocalVacancies(userId, localVacancies);
+    const { user_id, ...cleanLocal } = updatedLocal;
+    res.json({ data: cleanLocal });
+    return;
+  }
   const { user_id, created_at, ...clean } = data;
   res.json({ data: clean });
 });
 
 app.delete("/vacancies/:id", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
-  await supabase.from("matches").delete().eq("user_id", userId).eq("vacancy_id", req.params.id);
-  await supabase.from("vacancies").delete().eq("id", req.params.id).eq("user_id", userId);
+  db.deleteMatchesByVacancy(userId, req.params.id);
+  db.deleteVacancy(userId, req.params.id);
+  const localVacancies = readLocalVacancies(userId).filter((item) => item.id !== req.params.id);
+  writeLocalVacancies(userId, localVacancies);
   res.json({ success: true });
 });
 
@@ -261,8 +361,7 @@ app.delete("/vacancies/:id", authMiddleware, async (req, res) => {
 
 app.get("/candidates", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
-  const { data } = await supabase.from("candidates").select("*").eq("user_id", userId);
-  const candidates = (data ?? []).map(({ user_id, created_at, ...rest }) => rest);
+  const candidates = db.getCandidates(userId).map(({ user_id, created_at, ...rest }: any) => rest);
   res.json({ data: candidates });
 });
 
@@ -271,8 +370,8 @@ app.post("/candidates", authMiddleware, async (req, res) => {
   if (FEATURE_TARIFFS && !isAdmin(req)) {
     const sub = await ensureSubscription(userId);
     if (sub && sub.plan.limit_candidates !== -1) {
-      const { count } = await supabase.from("candidates").select("id", { count: "exact", head: true }).eq("user_id", userId);
-      if ((count ?? 0) >= sub.plan.limit_candidates) {
+      const count = db.countCandidates(userId);
+      if (count >= sub.plan.limit_candidates) {
         return res.status(403).json({ error: "Достигнут лимит кандидатов по тарифу." });
       }
     }
@@ -285,9 +384,8 @@ app.post("/candidates", authMiddleware, async (req, res) => {
     skills: Array.isArray(req.body.skills) ? req.body.skills : [],
     stage: String(req.body.stage ?? "Скрининг")
   };
-  const { data, error } = await supabase.from("candidates").insert(newCandidate).select().single();
-  if (error) { res.status(500).json({ error: error.message }); return; }
-  const { user_id, created_at, ...clean } = data;
+  db.insertCandidate(userId, newCandidate);
+  const { user_id, ...clean } = newCandidate;
   res.json({ data: clean });
 });
 
@@ -299,24 +397,17 @@ app.put("/candidates/:id", authMiddleware, async (req, res) => {
   if (req.body.stage != null) updates.stage = String(req.body.stage);
   if (Array.isArray(req.body.skills)) updates.skills = req.body.skills;
 
-  const { data, error } = await supabase
-    .from("candidates")
-    .update(updates)
-    .eq("id", req.params.id)
-    .eq("user_id", userId)
-    .select()
-    .single();
-
-  if (error || !data) { res.status(404).json({ error: "Кандидат не найден." }); return; }
-  const { user_id, created_at, ...clean } = data;
+  const data = db.updateCandidate(userId, req.params.id, updates);
+  if (!data) { res.status(404).json({ error: "Кандидат не найден." }); return; }
+  const { user_id, created_at, ...clean } = data as any;
   res.json({ data: clean });
 });
 
 app.delete("/candidates/:id", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
-  await supabase.from("matches").delete().eq("user_id", userId).eq("candidate_id", req.params.id);
-  await supabase.from("calendar_events").delete().eq("user_id", userId).eq("candidate_id", req.params.id);
-  await supabase.from("candidates").delete().eq("id", req.params.id).eq("user_id", userId);
+  db.deleteMatchesByCandidate(userId, req.params.id);
+  db.deleteCalendarEventsByCandidate(userId, req.params.id);
+  db.deleteCandidate(userId, req.params.id);
   res.json({ success: true });
 });
 
@@ -324,8 +415,7 @@ app.delete("/candidates/:id", authMiddleware, async (req, res) => {
 
 app.get("/matches", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
-  const { data } = await supabase.from("matches").select("*").eq("user_id", userId);
-  const matches = (data ?? []).map((row) => ({
+  const matches = db.getMatches(userId).map((row: any) => ({
     candidateId: row.candidate_id,
     vacancyId: row.vacancy_id,
     score: row.score,
@@ -343,8 +433,7 @@ app.post("/matches", authMiddleware, async (req, res) => {
     explanation: String(req.body.explanation ?? ""),
     vacancy_id: String(req.body.vacancyId ?? "")
   };
-  const { data, error } = await supabase.from("matches").insert(newMatch).select().single();
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  const data = db.insertMatch(userId, newMatch);
   res.json({
     data: {
       candidateId: data.candidate_id,
@@ -357,7 +446,7 @@ app.post("/matches", authMiddleware, async (req, res) => {
 
 app.delete("/matches/:candidateId", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
-  await supabase.from("matches").delete().eq("user_id", userId).eq("candidate_id", req.params.candidateId);
+  db.deleteMatchesByCandidate(userId, req.params.candidateId);
   res.json({ success: true });
 });
 
@@ -365,8 +454,7 @@ app.delete("/matches/:candidateId", authMiddleware, async (req, res) => {
 
 app.get("/calendar", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
-  const { data } = await supabase.from("calendar_events").select("*").eq("user_id", userId);
-  const events = (data ?? []).map(({ user_id, created_at, ...rest }) => ({
+  const events = db.getCalendarEvents(userId).map(({ user_id, created_at, ...rest }: any) => ({
     ...rest,
     candidateId: rest.candidate_id
   }));
@@ -386,15 +474,14 @@ app.post("/calendar", authMiddleware, async (req, res) => {
     status: String(req.body.status ?? "Запланировано"),
     candidate_id: req.body.candidateId ? String(req.body.candidateId) : null
   };
-  const { data, error } = await supabase.from("calendar_events").insert(newEvent).select().single();
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  const data = db.insertCalendarEvent(userId, newEvent);
   const { user_id, created_at, candidate_id, ...clean } = data;
   res.json({ data: { ...clean, candidateId: candidate_id } });
 });
 
 app.delete("/calendar/:id", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
-  await supabase.from("calendar_events").delete().eq("id", req.params.id).eq("user_id", userId);
+  db.deleteCalendarEvent(userId, req.params.id);
   res.json({ success: true });
 });
 
@@ -402,8 +489,7 @@ app.delete("/calendar/:id", authMiddleware, async (req, res) => {
 
 app.get("/communications", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
-  const { data } = await supabase.from("communications").select("*").eq("user_id", userId);
-  const comms = (data ?? []).map(({ user_id, created_at, ...rest }) => rest);
+  const comms = db.getCommunications(userId).map(({ user_id, created_at, ...rest }: any) => rest);
   res.json({ data: comms });
 });
 
@@ -417,8 +503,7 @@ app.post("/communications", authMiddleware, async (req, res) => {
     audience: String(req.body.audience ?? ""),
     status: String(req.body.status ?? "Запланировано")
   };
-  const { data, error } = await supabase.from("communications").insert(newComm).select().single();
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  const data = db.insertCommunication(userId, newComm);
   const { user_id, created_at, ...clean } = data;
   res.json({ data: clean });
 });
@@ -431,22 +516,16 @@ app.put("/communications/:id", authMiddleware, async (req, res) => {
   if (req.body.audience != null) updates.audience = String(req.body.audience);
   if (req.body.status != null) updates.status = String(req.body.status);
 
-  const { data, error } = await supabase
-    .from("communications")
-    .update(updates)
-    .eq("id", req.params.id)
-    .eq("user_id", userId)
-    .select()
-    .single();
+  const data = db.updateCommunication(userId, req.params.id, updates);
 
-  if (error || !data) { res.status(404).json({ error: "Коммуникация не найдена." }); return; }
+  if (!data) { res.status(404).json({ error: "Коммуникация не найдена." }); return; }
   const { user_id, created_at, ...clean } = data;
   res.json({ data: clean });
 });
 
 app.delete("/communications/:id", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
-  await supabase.from("communications").delete().eq("id", req.params.id).eq("user_id", userId);
+  db.deleteCommunication(userId, req.params.id);
   res.json({ success: true });
 });
 
@@ -454,12 +533,9 @@ app.delete("/communications/:id", authMiddleware, async (req, res) => {
 
 app.get("/support/messages", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
-  const { data } = await supabase
-    .from("support_messages")
-    .select("*")
-    .eq("user_id", userId)
-    .order("timestamp", { ascending: true });
-  const messages = (data ?? []).map(({ user_id, ...rest }) => rest);
+  const messages = db.getSupportMessages(userId)
+    .sort((a: any, b: any) => (a.timestamp ?? "").localeCompare(b.timestamp ?? ""))
+    .map(({ user_id, ...rest }: any) => rest);
   res.json({ data: messages });
 });
 
@@ -475,8 +551,7 @@ app.post("/support/messages", authMiddleware, async (req, res) => {
     sender: "user" as const,
     timestamp: now
   };
-  const { error: errUser } = await supabase.from("support_messages").insert(userMsg);
-  if (errUser) { res.status(500).json({ error: errUser.message }); return; }
+  db.insertSupportMessage(userId, userMsg);
 
   const botReply = getBotResponse(content);
   const botMsg = {
@@ -486,8 +561,7 @@ app.post("/support/messages", authMiddleware, async (req, res) => {
     sender: "support" as const,
     timestamp: new Date().toISOString()
   };
-  const { error: errBot } = await supabase.from("support_messages").insert(botMsg);
-  if (errBot) { res.status(500).json({ error: errBot.message }); return; }
+  db.insertSupportMessage(userId, botMsg);
 
   const { user_id: _1, ...cleanUser } = userMsg;
   const { user_id: _2, ...cleanBot } = botMsg;
@@ -503,26 +577,20 @@ app.get("/admin/support-chats", authMiddleware, async (req, res) => {
     return;
   }
 
-  const { data: users } = await supabase.from("users").select("*").neq("email", "admin@crm.ru");
+  const users = db.getUsers().filter((u: User) => (u.email ?? "").toLowerCase() !== "admin@crm.ru");
 
-  const chats = await Promise.all(
-    (users ?? []).map(async (user: User) => {
-      const { data: messages } = await supabase
-        .from("support_messages")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("timestamp", { ascending: true });
-
-      const msgs = (messages ?? []).map(({ user_id, ...rest }) => rest);
-      return {
-        userId: user.id,
-        userName: user.name,
-        userEmail: user.email,
-        messages: msgs,
-        lastMessage: msgs[msgs.length - 1]
-      };
-    })
-  );
+  const chats = users.map((user: User) => {
+    const messages = db.getSupportMessages(user.id)
+      .sort((a: any, b: any) => (a.timestamp ?? "").localeCompare(b.timestamp ?? ""))
+      .map(({ user_id, ...rest }: any) => rest);
+    return {
+      userId: user.id,
+      userName: user.name,
+      userEmail: user.email,
+      messages,
+      lastMessage: messages[messages.length - 1]
+    };
+  });
 
   res.json({ data: chats.filter((chat) => chat.messages.length > 0) });
 });
@@ -548,8 +616,7 @@ app.post("/admin/support-reply", authMiddleware, async (req, res) => {
     sender: "support" as const,
     timestamp: new Date().toISOString()
   };
-  const { error } = await supabase.from("support_messages").insert(newMsg);
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  db.insertSupportMessage(targetUserId, newMsg);
   const { user_id, ...clean } = newMsg;
   res.json({ data: clean });
 });
@@ -582,44 +649,20 @@ type SubscriptionWithPlan = {
 };
 
 async function getSubscription(userId: string): Promise<SubscriptionWithPlan | null> {
-  const { data: sub } = await supabase
-    .from("subscriptions")
-    .select("*, plan:plans(*)")
-    .eq("user_id", userId)
-    .limit(1)
-    .single();
-  if (!sub?.plan) return null;
-  return {
-    subscription: {
-      status: sub.status,
-      trial_ends_at: sub.trial_ends_at,
-      current_period_ends_at: sub.current_period_ends_at
-    },
-    plan: sub.plan as Plan
-  };
+  return db.getSubscriptionByUserId(userId) ?? null;
 }
 
 async function ensureSubscription(userId: string): Promise<SubscriptionWithPlan | null> {
   let sub = await getSubscription(userId);
   if (sub) return sub;
-  const { data: starterPlan } = await supabase.from("plans").select("id").eq("slug", "starter").limit(1).single();
-  if (!starterPlan) {
-    const { data: freePlan } = await supabase.from("plans").select("id").eq("slug", "free").limit(1).single();
-    if (!freePlan) return null;
-    const trialEnds = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
-    await supabase.from("subscriptions").insert({
-      user_id: userId,
-      plan_id: freePlan.id,
-      status: "trial",
-      trial_ends_at: trialEnds,
-      current_period_ends_at: trialEnds
-    });
-    return getSubscription(userId);
-  }
+  const starterPlan = db.getPlanBySlug("starter");
+  const freePlan = db.getPlanBySlug("free");
+  const planId = starterPlan?.id ?? freePlan?.id;
+  if (!planId) return null;
   const trialEnds = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
-  await supabase.from("subscriptions").insert({
+  db.insertSubscription({
     user_id: userId,
-    plan_id: starterPlan.id,
+    plan_id: planId,
     status: "trial",
     trial_ends_at: trialEnds,
     current_period_ends_at: trialEnds
@@ -636,38 +679,27 @@ app.post("/auth/register", async (req, res) => {
 
   const normalizedEmail = String(email).trim().toLowerCase();
 
-  const { data: existing } = await supabase
-    .from("users")
-    .select("id")
-    .eq("email", normalizedEmail)
-    .limit(1);
-
-  if (existing && existing.length > 0) {
+  if (db.getUserByEmail(normalizedEmail)) {
     res.status(409).json({ error: "Пользователь уже зарегистрирован." });
     return;
   }
 
-  const { data: allUsers } = await supabase.from("users").select("id");
+  const allUsers = db.getUsers();
   const newUser: User = {
-    id: `usr-${(allUsers?.length ?? 0) + 1}`,
+    id: `usr-${allUsers.length + 1}`,
     name: String(name).trim(),
     email: normalizedEmail,
     password: String(password)
   };
 
-  const { error } = await supabase.from("users").insert(newUser);
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  db.insertUser(newUser);
 
-  let planId: string | null = null;
-  const { data: starterPlan } = await supabase.from("plans").select("id").eq("slug", "starter").limit(1).single();
-  if (starterPlan) planId = starterPlan.id;
-  else {
-    const { data: freePlan } = await supabase.from("plans").select("id").eq("slug", "free").limit(1).single();
-    if (freePlan) planId = freePlan.id;
-  }
+  const starterPlan = db.getPlanBySlug("starter");
+  const freePlan = db.getPlanBySlug("free");
+  const planId = starterPlan?.id ?? freePlan?.id;
   if (planId) {
     const trialEnds = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
-    await supabase.from("subscriptions").insert({
+    db.insertSubscription({
       user_id: newUser.id,
       plan_id: planId,
       status: "trial",
@@ -680,7 +712,7 @@ app.post("/auth/register", async (req, res) => {
     const token = crypto.randomUUID();
     const code = String(Math.floor(100000 + Math.random() * 900000));
     const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
-    await supabase.from("verification_tokens").insert({
+    db.insertVerificationToken({
       user_id: newUser.id,
       token,
       expires_at: expiresAt,
@@ -710,27 +742,14 @@ app.get("/auth/verify", async (req, res) => {
   if (!token) {
     return res.redirect(`${APP_URL}/login?error=missing_token`);
   }
-  const { data: row } = await supabase
-    .from("verification_tokens")
-    .select("user_id")
-    .eq("token", token)
-    .is("used_at", null)
-    .gt("expires_at", new Date().toISOString())
-    .limit(1)
-    .single();
+  const row = db.getVerificationTokenByToken(token);
 
   if (!row) {
     return res.redirect(`${APP_URL}/login?error=invalid_or_expired`);
   }
 
-  await supabase
-    .from("verification_tokens")
-    .update({ used_at: new Date().toISOString() })
-    .eq("token", token);
-  await supabase
-    .from("users")
-    .update({ email_verified_at: new Date().toISOString() })
-    .eq("id", row.user_id);
+  db.markVerificationTokenUsed(token);
+  db.updateUser(row.user_id, { email_verified_at: new Date().toISOString() });
 
   res.redirect(`${APP_URL}/login?verified=1`);
 });
@@ -742,24 +761,16 @@ app.post("/auth/verify-code", async (req, res) => {
   if (!normalizedEmail || codeStr.length !== 6) {
     return res.status(400).json({ error: "Укажите email и 6-значный код из письма." });
   }
-  const { data: user } = await supabase.from("users").select("id").eq("email", normalizedEmail).limit(1).single();
+  const user = db.getUserByEmail(normalizedEmail);
   if (!user) {
     return res.status(404).json({ error: "Пользователь не найден." });
   }
-  const { data: row } = await supabase
-    .from("verification_tokens")
-    .select("user_id")
-    .eq("user_id", user.id)
-    .eq("code", codeStr)
-    .is("used_at", null)
-    .gt("expires_at", new Date().toISOString())
-    .limit(1)
-    .single();
+  const row = db.getVerificationTokenByUserAndCode(user.id, codeStr);
   if (!row) {
     return res.status(400).json({ error: "Код неверный или истёк. Запросите новое письмо, зарегистрировавшись снова." });
   }
-  await supabase.from("verification_tokens").update({ used_at: new Date().toISOString() }).eq("user_id", user.id).eq("code", codeStr);
-  await supabase.from("users").update({ email_verified_at: new Date().toISOString() }).eq("id", user.id);
+  db.markVerificationTokenUsedByUserAndCode(user.id, codeStr);
+  db.updateUser(user.id, { email_verified_at: new Date().toISOString() });
   return res.json({ success: true, message: "Email подтверждён. Войдите в систему." });
 });
 
@@ -771,15 +782,28 @@ app.post("/auth/login", async (req, res) => {
   }
 
   const normalizedEmail = String(email).trim().toLowerCase();
-  const { data: users } = await supabase
-    .from("users")
-    .select("*")
-    .eq("email", normalizedEmail)
-    .eq("password", String(password))
-    .limit(1);
+  const passwordStr = String(password);
 
-  const user = users?.[0] as User | undefined;
-  if (!user) {
+  // Bootstrap admin for single-admin mode (when DB was cleaned/reset)
+  const adminEmail = "admin@crm.ru";
+  const adminPassword = process.env.ADMIN_PASSWORD ?? "admin";
+  if (normalizedEmail === adminEmail && passwordStr === adminPassword) {
+    const adminRow: User = {
+      id: "usr-admin",
+      name: "Администратор",
+      email: adminEmail,
+      password: adminPassword,
+      email_verified_at: new Date().toISOString()
+    };
+    db.upsertUser(adminRow);
+    return res.json({
+      token: createToken(adminEmail),
+      user: { id: adminRow.id, name: adminRow.name, email: adminRow.email }
+    });
+  }
+
+  const user = db.getUserByEmail(normalizedEmail) as User | undefined;
+  if (!user || user.password !== passwordStr) {
     res.status(401).json({ error: "Неверный email или пароль." });
     return;
   }
@@ -803,11 +827,8 @@ const INTEGRATION_SERVICES = ["hh_ru", "linkedin", "google_workspace", "outlook"
 
 app.get("/integrations", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
-  const { data, error } = await supabase
-    .from("integrations")
-    .select("service, status, last_sync_at")
-    .eq("user_id", userId);
-  const byService = new Map((data ?? []).map((r: any) => [r.service, r]));
+  const data = db.getIntegrations(userId);
+  const byService = new Map(data.map((r: any) => [r.service, r]));
   const list = INTEGRATION_SERVICES.map((service) => {
     const row = byService.get(service);
     return {
@@ -832,26 +853,19 @@ app.put("/integrations/:service", authMiddleware, async (req, res) => {
     res.status(400).json({ error: "Укажите API ключ." });
     return;
   }
-  const { error } = await supabase.from("integrations").upsert(
-    {
-      user_id: userId,
-      service,
-      api_key_encrypted: apiKey,
-      status: "connected"
-    },
-    { onConflict: "user_id,service" }
-  );
-  if (error) {
-    res.status(500).json({ error: error.message });
-    return;
-  }
+  db.upsertIntegration(userId, {
+    user_id: userId,
+    service,
+    api_key_encrypted: apiKey,
+    status: "connected"
+  });
   res.json({ data: { service, status: "connected" } });
 });
 
 app.delete("/integrations/:service", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
   const service = String(req.params.service ?? "").toLowerCase().replace(/[^a-z0-9_]/g, "_");
-  await supabase.from("integrations").delete().eq("user_id", userId).eq("service", service);
+  db.deleteIntegration(userId, service);
   res.json({ success: true });
 });
 
@@ -882,31 +896,21 @@ app.post("/integrations/:service/sync", authMiddleware, async (req, res) => {
     return;
   }
 
-  const { data: integration } = await supabase
-    .from("integrations")
-    .select("id")
-    .eq("user_id", userId)
-    .eq("service", service)
-    .eq("status", "connected")
-    .single();
+  const integration = db.getIntegrationByService(userId, service);
 
-  if (!integration) {
+  if (!integration || integration.status !== "connected") {
     res.status(400).json({ error: "Сначала подключите интеграцию и укажите API ключ." });
     return;
   }
 
-  await supabase
-    .from("integrations")
-    .update({ status: "syncing" })
-    .eq("user_id", userId)
-    .eq("service", service);
+  db.updateIntegration(userId, service, { status: "syncing" });
 
   try {
     const vacancies = getMockVacanciesForService(service);
     const candidates = getMockCandidatesForService(service);
 
     for (const v of vacancies) {
-      await supabase.from("vacancies").insert({
+      db.insertVacancy(userId, {
         id: v.id,
         user_id: userId,
         title: v.title,
@@ -918,7 +922,7 @@ app.post("/integrations/:service/sync", authMiddleware, async (req, res) => {
     }
 
     for (const c of candidates) {
-      await supabase.from("candidates").insert({
+      db.insertCandidate(userId, {
         id: c.id,
         user_id: userId,
         name: c.name,
@@ -930,11 +934,7 @@ app.post("/integrations/:service/sync", authMiddleware, async (req, res) => {
     }
 
     const now = new Date().toISOString();
-    await supabase
-      .from("integrations")
-      .update({ status: "connected", last_sync_at: now })
-      .eq("user_id", userId)
-      .eq("service", service);
+    db.updateIntegration(userId, service, { status: "connected", last_sync_at: now });
 
     res.json({
       data: {
@@ -945,11 +945,7 @@ app.post("/integrations/:service/sync", authMiddleware, async (req, res) => {
       }
     });
   } catch (err) {
-    await supabase
-      .from("integrations")
-      .update({ status: "error" })
-      .eq("user_id", userId)
-      .eq("service", service);
+    db.updateIntegration(userId, service, { status: "error" });
     res.status(500).json({
       error: "Ошибка синхронизации",
       details: err instanceof Error ? err.message : String(err)
@@ -958,6 +954,38 @@ app.post("/integrations/:service/sync", authMiddleware, async (req, res) => {
 });
 
 // ---- AI Matching ----
+
+app.get("/ai/status", authMiddleware, async (_req, res) => {
+  const aiServiceUrl = (process.env.AI_SERVICE_URL?.trim() || `http://localhost:${AI_PORT}`).replace(/\/$/, "");
+  const maxRetries = 5;
+  const retryDelayMs = 3000;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const healthRes = await fetch(`${aiServiceUrl}/health`, { signal: controller.signal });
+      clearTimeout(timeout);
+      const healthJson = await healthRes.json().catch(() => ({} as any));
+      if (healthRes.ok) {
+        return res.json({
+          available: true,
+          semantic_backend: (healthJson as any).semantic_backend
+        });
+      }
+    } catch {
+      // AI service may still be loading (model takes ~30s)
+      if (attempt < maxRetries) {
+        await new Promise((r) => setTimeout(r, retryDelayMs));
+      }
+    }
+  }
+
+  return res.json({
+    available: false,
+    message: "AI-сервис не отвечает. Подождите 30–60 секунд после старта (загрузка модели) и обновите страницу. Если не помогло: cd ai && python app.py"
+  });
+});
 
 app.post("/ai/match/batch", authMiddleware, async (req, res) => {
   const userId = (req as any).userId as string;
@@ -985,13 +1013,8 @@ app.post("/ai/match/batch", authMiddleware, async (req, res) => {
   }
 
   try {
-    const [vacRes, candRes] = await Promise.all([
-      supabase.from("vacancies").select("*").eq("id", vacancy_id).eq("user_id", userId).single(),
-      supabase.from("candidates").select("*").eq("user_id", userId)
-    ]);
-
-    const vacancy = vacRes.data;
-    const candidates = candRes.data ?? [];
+    const vacancy = db.getVacancyById(userId, vacancy_id);
+    const candidates = db.getCandidates(userId);
     if (!vacancy) {
       res.status(404).json({ error: "Вакансия не найдена" });
       return;
@@ -1018,7 +1041,7 @@ app.post("/ai/match/batch", authMiddleware, async (req, res) => {
     const aiData = await aiResponse.json() as any;
 
     if (auto_save && aiData.matches) {
-      await supabase.from("matches").delete().eq("user_id", userId).eq("vacancy_id", vacancy_id);
+      db.deleteMatchesByVacancy(userId, vacancy_id);
 
       const newMatches = aiData.matches
         .filter((m: any) => m.score >= 4.0)
@@ -1031,7 +1054,7 @@ app.post("/ai/match/batch", authMiddleware, async (req, res) => {
         }));
 
       if (newMatches.length > 0) {
-        await supabase.from("matches").insert(newMatches);
+        db.insertMatches(userId, newMatches);
       }
     }
 
@@ -1070,13 +1093,8 @@ app.post("/ai/match/analyze", authMiddleware, async (req, res) => {
   }
 
   try {
-    const [vacRes, candRes] = await Promise.all([
-      supabase.from("vacancies").select("*").eq("id", vacancy_id).eq("user_id", userId).single(),
-      supabase.from("candidates").select("*").eq("id", candidate_id).eq("user_id", userId).single()
-    ]);
-
-    const vacancy = vacRes.data;
-    const candidate = candRes.data;
+    const vacancy = db.getVacancyById(userId, vacancy_id);
+    const candidate = db.getCandidateById(userId, candidate_id);
     if (!vacancy || !candidate) {
       res.status(404).json({ error: "Вакансия или кандидат не найдены" });
       return;
@@ -1124,6 +1142,8 @@ if (isProduction && fs.existsSync(frontendDist)) {
 }
 
 // ---- Start ----
+
+startAiService();
 
 app.listen(port, () => {
   console.log(`Найми backend: http://localhost:${port}`);

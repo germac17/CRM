@@ -32,7 +32,7 @@ cd frontend; npm install; npm run dev
 
 ## Развёртывание на одном хосте
 
-Сборка фронта, настройка backend и запуск на одном сервере с базой Supabase описаны в **[DEPLOY.md](DEPLOY.md)**.
+Сборка фронта, настройка backend и запуск на одном сервере описаны в **[DEPLOY.md](DEPLOY.md)**.
 
 ## Документация
 
