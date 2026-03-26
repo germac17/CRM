@@ -148,7 +148,20 @@ function getVercelMissingApiMessage(): string | null {
     host === "vercel.app" ||
     import.meta.env.VITE_VERCEL === true;
   if (!import.meta.env.PROD || !onVercelRuntime) return null;
-  return "Не задан VITE_API_URL. В Vercel: Settings → Environment Variables → добавьте VITE_API_URL = публичный URL вашего backend (https://…), выберите Environment = Production, затем Redeploy. Статика на Vercel не содержит API.";
+  return [
+    "При сборке не был указан URL бэкенда (переменная VITE_API_URL).",
+    "",
+    "1) Разверните API из папки backend на любом хосте с HTTPS и публичным адресом (VPS, Railway, Render и т.д.).",
+    "",
+    "2) В Vercel: Project → Settings → Environment Variables → Add:",
+    "   • Name: VITE_API_URL",
+    "   • Value: https://ваш-api-домен (без / в конце)",
+    "   • Environments: выберите Production и при необходимости Preview (если деплой по ветке).",
+    "",
+    "3) Deployments → последний деплой → … → Redeploy. Без пересборки сборка не увидит переменную.",
+    "",
+    "Если переменная уже есть — проверьте имя (ровно VITE_API_URL) и Redeploy."
+  ].join("\n");
 }
 
 function getApiBase(): string {
