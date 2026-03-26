@@ -137,23 +137,25 @@ const getInitials = (value: string): string => {
   return parts.slice(0, 2).map((part) => part[0]?.toUpperCase() ?? "").join("");
 };
 
+function getVercelMissingApiMessage(): string | null {
+  if (import.meta.env.DEV) return null;
+  const fromEnv = (import.meta.env.VITE_API_URL || "").trim();
+  if (fromEnv) return null;
+  if (typeof window === "undefined") return null;
+  const host = window.location.hostname;
+  const onVercelRuntime =
+    host.endsWith(".vercel.app") ||
+    host === "vercel.app" ||
+    import.meta.env.VITE_VERCEL === true;
+  if (!import.meta.env.PROD || !onVercelRuntime) return null;
+  return "Не задан VITE_API_URL. В Vercel: Settings → Environment Variables → добавьте VITE_API_URL = публичный URL вашего backend (https://…), выберите Environment = Production, затем Redeploy. Статика на Vercel не содержит API.";
+}
+
 function getApiBase(): string {
   const fromEnv = (import.meta.env.VITE_API_URL || "").trim();
   if (fromEnv) return fromEnv.replace(/\/$/, "");
   if (import.meta.env.DEV) return "http://localhost:4000";
-  if (typeof window !== "undefined") {
-    const host = window.location.hostname;
-    const onVercelRuntime =
-      host.endsWith(".vercel.app") ||
-      host === "vercel.app" ||
-      import.meta.env.VITE_VERCEL === true;
-    if (import.meta.env.PROD && onVercelRuntime) {
-      throw new Error(
-        "Не задан VITE_API_URL. В Vercel: Settings → Environment Variables → добавьте VITE_API_URL = публичный URL вашего backend (https://…), Environment = Production, затем Redeploy. Статика на Vercel не содержит API."
-      );
-    }
-    return window.location.origin;
-  }
+  if (typeof window !== "undefined") return window.location.origin;
   return "http://localhost:4000";
 }
 
@@ -361,8 +363,14 @@ export default function App() {
     subscription: { status: string; trial_ends_at: string | null; current_period_ends_at: string };
     plan: { name: string; slug: string; price_monthly: number; limit_vacancies: number | string; limit_candidates: number | string; ai_matching_enabled: boolean };
   } | null>(null);
+
+  const [apiConfigError] = useState<string | null>(() => getVercelMissingApiMessage());
  
   useEffect(() => {
+    if (apiConfigError) {
+      setLoading(false);
+      return;
+    }
     if (!token) {
       setLoading(false);
       return;
@@ -438,7 +446,7 @@ export default function App() {
     };
 
     load();
-  }, [token]);
+  }, [token, apiConfigError]);
  
   useEffect(() => {
     const savedToken = localStorage.getItem("naymi_token");
@@ -687,6 +695,7 @@ export default function App() {
   }, [isAdmin]);
  
   useEffect(() => {
+    if (apiConfigError) return;
     if (activeTab === "admin" && !isAdmin) {
       setActiveTab("dashboard");
       window.location.hash = "tab=dashboard";
@@ -712,9 +721,10 @@ export default function App() {
       };
       loadChats();
     }
-  }, [activeTab, isAdmin, token]);
+  }, [activeTab, isAdmin, token, apiConfigError]);
 
   useEffect(() => {
+    if (apiConfigError) return;
     if (activeTab !== "tariff" || !token) return;
     const apiBase = getApiBase();
     const loadTariff = async () => {
@@ -736,9 +746,10 @@ export default function App() {
       }
     };
     loadTariff();
-  }, [activeTab, token]);
+  }, [activeTab, token, apiConfigError]);
 
   useEffect(() => {
+    if (apiConfigError) return;
     if (activeTab !== "matching" || !token) return;
     const apiBase = getApiBase();
     setAiServiceAvailable(null);
@@ -749,7 +760,7 @@ export default function App() {
         setAiServiceAvailable(!!data.available);
       })
       .catch(() => setAiServiceAvailable(false));
-  }, [activeTab, token]);
+  }, [activeTab, token, apiConfigError]);
 
   const calendarMonthLabel = calendarDate.toLocaleDateString("ru-RU", {
     month: "long",
@@ -1552,6 +1563,19 @@ export default function App() {
     }
   };
  
+  if (apiConfigError) {
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <h1>Нужна настройка API</h1>
+          <p className="muted" style={{ whiteSpace: "pre-wrap" }}>
+            {apiConfigError}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (!token) {
     return (
       <div className="auth-page">
