@@ -41,6 +41,13 @@ npm run build
 
 В `frontend/.env.production` задайте `VITE_API_URL=https://ваш-домен.ru` (или оставьте пустым, если API на том же домене).
 
+### Фронт на Vercel, API на другом хосте
+
+- **Адрес сайта на Vercel** (пример): `https://crm-jfsix03d2-germac17s-projects.vercel.app` — это **не** URL API.
+- В **Vercel → Settings → Environment Variables** для сборки задайте **`VITE_API_URL`** = публичный URL вашего **backend** (где открыт порт API, например `https://api.ваш-домен.ru`).
+- В **`.env` на сервере с backend** укажите **`APP_URL`** = URL фронта на Vercel (без `/` в конце), чтобы CORS и редиректы после верификации работали. Несколько доменов (production + preview): перечислите через запятую в `APP_URL`.
+- Отдельно задайте **`BACKEND_URL`** = публичный URL API, если он отличается от `APP_URL` (нужно для ссылок в письмах).
+
 ## 5. Запуск на сервере
 
 Backend в production отдаёт статику из `frontend/dist`, если эта папка есть относительно backend.

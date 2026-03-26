@@ -66,6 +66,14 @@ function startAiService(): void {
   trySpawn(0);
 }
 
+function parseAppUrls(): string[] {
+  const raw = process.env.APP_URL ?? "http://localhost:3000";
+  return raw
+    .split(",")
+    .map((s) => s.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+}
+
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
 
@@ -75,9 +83,10 @@ app.use(
   })
 );
 
-const APP_ORIGIN = process.env.APP_URL ?? "http://localhost:3000";
+const localCorsOrigins = ["http://localhost:3000", "http://localhost:4000", "http://127.0.0.1:3000", "http://127.0.0.1:4000"];
+const corsOrigins = [...new Set([...parseAppUrls(), ...localCorsOrigins])];
 app.use(cors({
-  origin: [APP_ORIGIN, "http://localhost:3000", "http://localhost:4000", "http://127.0.0.1:3000", "http://127.0.0.1:4000"],
+  origin: corsOrigins,
   credentials: true
 }));
 
@@ -625,8 +634,11 @@ app.post("/admin/support-reply", authMiddleware, async (req, res) => {
 
 const FEATURE_EMAIL_VERIFICATION = process.env.FEATURE_EMAIL_VERIFICATION === "true";
 const FEATURE_TARIFFS = process.env.FEATURE_TARIFFS === "true";
-const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
-const BACKEND_URL = process.env.BACKEND_URL ?? process.env.APP_URL ?? "http://localhost:4000";
+const APP_URL = parseAppUrls()[0] ?? "http://localhost:3000";
+const BACKEND_URL =
+  process.env.BACKEND_URL?.trim() ||
+  (process.env.APP_URL ? parseAppUrls()[0] : undefined) ||
+  "http://localhost:4000";
 
 type Plan = {
   id: string;
@@ -1148,6 +1160,6 @@ startAiService();
 app.listen(port, () => {
   console.log(`Найми backend: http://localhost:${port}`);
   if (isProduction) {
-    console.log(`Фронтенд отдаётся с этого же сервера (${APP_ORIGIN})`);
+    console.log(`Фронтенд отдаётся с этого же сервера (${APP_URL})`);
   }
 });
