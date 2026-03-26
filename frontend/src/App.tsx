@@ -137,6 +137,36 @@ const getInitials = (value: string): string => {
   return parts.slice(0, 2).map((part) => part[0]?.toUpperCase() ?? "").join("");
 };
 
+function getApiBase(): string {
+  const fromEnv = (import.meta.env.VITE_API_URL || "").trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, "");
+  if (import.meta.env.DEV) return "http://localhost:4000";
+  if (typeof window !== "undefined") return window.location.origin;
+  return "http://localhost:4000";
+}
+
+async function readJsonRes(res: Response): Promise<unknown> {
+  const text = await res.text();
+  const trimmed = text.trim();
+  if (!trimmed) {
+    throw new Error(`Пустой ответ сервера (HTTP ${res.status}).`);
+  }
+  const looksJson = trimmed.startsWith("{") || trimmed.startsWith("[");
+  if (!looksJson) {
+    const preview = trimmed.replace(/\s+/g, " ").slice(0, 140);
+    const hint =
+      preview.includes("The page") || preview.startsWith("<!") || preview.startsWith("<")
+        ? " Укажите VITE_API_URL на URL бэкенда в переменных окружения Vercel."
+        : "";
+    throw new Error(`Ожидался JSON, получено: ${preview}…${hint}`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`Некорректный JSON (HTTP ${res.status}).`);
+  }
+}
+
 const DEFAULT_VACANCY_FORM = {
   title: "",
   department: "",
@@ -326,7 +356,7 @@ export default function App() {
       return;
     }
 
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
 
     const load = async () => {
       setLoading(true);
@@ -360,14 +390,14 @@ export default function App() {
         if (coreResponses.some((r) => !r.ok)) {
           throw new Error("API недоступен.");
         }
-        const vacancyJson = (await vacancyRes.json()) as { data: Vacancy[] };
-        const candidateJson = (await candidateRes.json()) as {
+        const vacancyJson = (await readJsonRes(vacancyRes)) as { data: Vacancy[] };
+        const candidateJson = (await readJsonRes(candidateRes)) as {
           data: Candidate[];
         };
-        const matchJson = (await matchRes.json()) as { data: Match[] };
-        const calendarJson = (await calendarRes.json()) as { data: CalendarEvent[] };
-        const commJson = (await commRes.json()) as { data: Communication[] };
-        const supportJson = (await supportRes.json()) as { data: SupportMessage[] };
+        const matchJson = (await readJsonRes(matchRes)) as { data: Match[] };
+        const calendarJson = (await readJsonRes(calendarRes)) as { data: CalendarEvent[] };
+        const commJson = (await readJsonRes(commRes)) as { data: Communication[] };
+        const supportJson = (await readJsonRes(supportRes)) as { data: SupportMessage[] };
         const integrationsFallback: Integration[] = ["hh_ru", "linkedin", "google_workspace", "outlook", "slack"].map((s) => ({
           service: s,
           status: "disconnected",
@@ -375,7 +405,7 @@ export default function App() {
           hasKey: false
         }));
         const integrationsJson = integrationsRes.ok
-          ? ((await integrationsRes.json()) as { data: Integration[] })
+          ? ((await readJsonRes(integrationsRes)) as { data: Integration[] })
           : { data: integrationsFallback };
 
         setVacancies(vacancyJson.data);
@@ -652,7 +682,7 @@ export default function App() {
     
     // Загрузить чаты для администратора
     if (activeTab === "admin" && isAdmin && token) {
-      const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+      const apiBase = getApiBase();
       const loadChats = async () => {
         try {
           const response = await fetch(`${apiBase}/admin/support-chats`, {
@@ -661,7 +691,7 @@ export default function App() {
             }
           });
           if (response.ok) {
-            const json = (await response.json()) as { data: SupportChat[] };
+            const json = (await readJsonRes(response)) as { data: SupportChat[] };
             setAdminChats(json.data);
           }
         } catch (err) {
@@ -674,7 +704,7 @@ export default function App() {
 
   useEffect(() => {
     if (activeTab !== "tariff" || !token) return;
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     const loadTariff = async () => {
       try {
         const [plansRes, subRes] = await Promise.all([
@@ -682,11 +712,11 @@ export default function App() {
           fetch(`${apiBase}/subscription`, { headers: { Authorization: `Bearer ${token}` } })
         ]);
         if (plansRes.ok) {
-          const j = (await plansRes.json()) as { data: typeof plans };
+          const j = (await readJsonRes(plansRes)) as { data: typeof plans };
           setPlans(j.data ?? []);
         }
         if (subRes.ok) {
-          const j = (await subRes.json()) as { data: typeof subscription };
+          const j = (await readJsonRes(subRes)) as { data: typeof subscription };
           setSubscription(j.data ?? null);
         }
       } catch {
@@ -698,11 +728,14 @@ export default function App() {
 
   useEffect(() => {
     if (activeTab !== "matching" || !token) return;
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     setAiServiceAvailable(null);
     fetch(`${apiBase}/ai/status`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.json())
-      .then((data: { available?: boolean }) => setAiServiceAvailable(!!data.available))
+      .then((r) => readJsonRes(r))
+      .then((raw) => {
+        const data = raw as { available?: boolean };
+        setAiServiceAvailable(!!data.available);
+      })
       .catch(() => setAiServiceAvailable(false));
   }, [activeTab, token]);
 
@@ -752,13 +785,13 @@ export default function App() {
 
   const loadIntegrations = async () => {
     if (!token) return;
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     try {
       const res = await fetch(`${apiBase}/integrations`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
-        const json = (await res.json()) as { data: Integration[] };
+        const json = (await readJsonRes(res)) as { data: Integration[] };
         setIntegrationsList(json.data);
       }
     } catch {
@@ -770,7 +803,7 @@ export default function App() {
     e.preventDefault();
     if (!selectedIntegrationService || !integrationApiKey.trim() || !token) return;
     setIntegrationConnectLoading(true);
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     try {
       const res = await fetch(`${apiBase}/integrations/${selectedIntegrationService}`, {
         method: "PUT",
@@ -786,7 +819,7 @@ export default function App() {
         setSelectedIntegrationService(null);
         setIntegrationApiKey("");
       } else {
-        const err = (await res.json()) as { error?: string };
+        const err = (await readJsonRes(res)) as { error?: string };
         setError(err.error ?? "Ошибка подключения");
       }
     } catch (err) {
@@ -798,7 +831,7 @@ export default function App() {
 
   const handleIntegrationDisconnect = async (service: string) => {
     if (!token) return;
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     try {
       const res = await fetch(`${apiBase}/integrations/${service}`, {
         method: "DELETE",
@@ -813,14 +846,14 @@ export default function App() {
   const handleIntegrationSync = async (service: string) => {
     if (!token) return;
     setIntegrationSyncLoading(service);
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     try {
       const res = await fetch(`${apiBase}/integrations/${service}/sync`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
-        const json = (await res.json()) as { data: { imported: { vacancies: number; candidates: number } } };
+        const json = (await readJsonRes(res)) as { data: { imported: { vacancies: number; candidates: number } } };
         await loadIntegrations();
         const { vacancies: v, candidates: c } = json.data.imported;
         setVacancies((prev) => [...prev]);
@@ -831,8 +864,8 @@ export default function App() {
             fetch(`${apiBase}/candidates`, { headers: { Authorization: `Bearer ${token}` } })
           ]);
           if (vr.ok && cr.ok) {
-            const vj = (await vr.json()) as { data: Vacancy[] };
-            const cj = (await cr.json()) as { data: Candidate[] };
+            const vj = (await readJsonRes(vr)) as { data: Vacancy[] };
+            const cj = (await readJsonRes(cr)) as { data: Candidate[] };
             setVacancies(vj.data);
             setCandidates(cj.data);
           }
@@ -840,7 +873,7 @@ export default function App() {
         await load();
         setError(null);
       } else {
-        const err = (await res.json()) as { error?: string };
+        const err = (await readJsonRes(res)) as { error?: string };
         setError(err.error ?? "Ошибка синхронизации");
       }
     } catch (err) {
@@ -877,7 +910,7 @@ export default function App() {
   };
  
   const handleCandidateDelete = async (candidateId: string) => {
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     try {
       const response = await fetch(`${apiBase}/candidates/${candidateId}`, {
         method: "DELETE",
@@ -904,7 +937,7 @@ export default function App() {
     if (!matchingForm.candidateId) {
       return;
     }
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     
     try {
       const response = await fetch(`${apiBase}/matches`, {
@@ -922,7 +955,7 @@ export default function App() {
       });
       
       if (response.ok) {
-        const json = (await response.json()) as { data: Match };
+        const json = (await readJsonRes(response)) as { data: Match };
         setMatches((prev) => [...prev, json.data]);
         setMatchingForm({ candidateId: "", score: "0.8", explanation: "" });
       }
@@ -932,7 +965,7 @@ export default function App() {
   };
  
   const handleMatchDelete = async (candidateId: string) => {
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     try {
       const response = await fetch(`${apiBase}/matches/${candidateId}`, {
         method: "DELETE",
@@ -952,7 +985,7 @@ export default function App() {
 
   const handleEventSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     
     try {
       const response = await fetch(`${apiBase}/calendar`, {
@@ -972,7 +1005,7 @@ export default function App() {
       });
       
       if (response.ok) {
-        const json = (await response.json()) as { data: CalendarEvent };
+        const json = (await readJsonRes(response)) as { data: CalendarEvent };
         setCalendarEvents((prev) => [...prev, json.data]);
         setShowEventModal(false);
         setEventForm({
@@ -990,7 +1023,7 @@ export default function App() {
   };
 
   const handleEventDelete = async (eventId: string) => {
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     try {
       const response = await fetch(`${apiBase}/calendar/${eventId}`, {
         method: "DELETE",
@@ -1024,7 +1057,7 @@ export default function App() {
 
   const handleCommSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     
     try {
       if (editingCommId) {
@@ -1043,7 +1076,7 @@ export default function App() {
         });
         
         if (response.ok) {
-          const json = (await response.json()) as { data: Communication };
+          const json = (await readJsonRes(response)) as { data: Communication };
           setCommunications((prev) =>
             prev.map((comm) => (comm.id === editingCommId ? json.data : comm))
           );
@@ -1072,7 +1105,7 @@ export default function App() {
         });
         
         if (response.ok) {
-          const json = (await response.json()) as { data: Communication };
+          const json = (await readJsonRes(response)) as { data: Communication };
           setCommunications((prev) => [...prev, json.data]);
           setShowCommModal(false);
           setCommForm({
@@ -1104,7 +1137,7 @@ export default function App() {
   };
 
   const handleCommDelete = async (commId: string) => {
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     try {
       const response = await fetch(`${apiBase}/communications/${commId}`, {
         method: "DELETE",
@@ -1125,7 +1158,7 @@ export default function App() {
     if (!supportInput.trim()) {
       return;
     }
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     setSupportLoading(true);
     
     try {
@@ -1141,7 +1174,7 @@ export default function App() {
       });
       
       if (response.ok) {
-        const json = (await response.json()) as { data: SupportMessage[] };
+        const json = (await readJsonRes(response)) as { data: SupportMessage[] };
         setSupportMessages((prev) => [...prev, ...json.data]);
         setSupportInput("");
       }
@@ -1157,7 +1190,7 @@ export default function App() {
     if (!adminReplyInput.trim() || !selectedChatUserId) {
       return;
     }
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     
     try {
       const response = await fetch(`${apiBase}/admin/support-reply`, {
@@ -1173,7 +1206,7 @@ export default function App() {
       });
       
       if (response.ok) {
-        const json = (await response.json()) as { data: SupportMessage };
+        const json = (await readJsonRes(response)) as { data: SupportMessage };
         setAdminChats((prev) =>
           prev.map((chat) =>
             chat.userId === selectedChatUserId
@@ -1197,7 +1230,7 @@ export default function App() {
     setAuthError(null);
     setAuthSuccess(null);
     setAuthLoading(true);
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
  
     try {
       const payload =
@@ -1217,7 +1250,7 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      const json = (await response.json()) as {
+      const json = (await readJsonRes(response)) as {
         token?: string;
         user?: AuthUser;
         error?: string;
@@ -1259,14 +1292,14 @@ export default function App() {
     if (!pendingVerificationEmail || verificationCode.trim().length !== 6) return;
     setAuthError(null);
     setAuthLoading(true);
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     try {
       const res = await fetch(`${apiBase}/auth/verify-code`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: pendingVerificationEmail, code: verificationCode.trim() })
       });
-      const json = (await res.json()) as { success?: boolean; message?: string; error?: string };
+      const json = (await readJsonRes(res)) as { success?: boolean; message?: string; error?: string };
       if (res.ok && json.success) {
         setPendingVerificationEmail(null);
         setVerificationCode("");
@@ -1291,7 +1324,7 @@ export default function App() {
  
   const handleVacancySubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     
     try {
       const payload = {
@@ -1336,7 +1369,7 @@ export default function App() {
         });
         
         if (response.ok) {
-          const json = (await response.json()) as { data: Vacancy };
+          const json = (await readJsonRes(response)) as { data: Vacancy };
           setVacancies((prev) =>
             prev.map((vacancy) =>
               vacancy.id === editingVacancyId ? json.data : vacancy
@@ -1346,7 +1379,7 @@ export default function App() {
           setShowVacancyModal(false);
           setVacancyForm({ ...DEFAULT_VACANCY_FORM });
         } else {
-          const json = (await response.json().catch(() => ({}))) as { error?: string };
+          const json = (await readJsonRes(response).catch(() => ({}))) as { error?: string };
           alert(json.error ?? "Не удалось сохранить вакансию.");
         }
       } else {
@@ -1360,12 +1393,12 @@ export default function App() {
         });
         
         if (response.ok) {
-          const json = (await response.json()) as { data: Vacancy };
+          const json = (await readJsonRes(response)) as { data: Vacancy };
           setVacancies((prev) => [...prev, json.data]);
           setShowVacancyModal(false);
           setVacancyForm({ ...DEFAULT_VACANCY_FORM });
         } else {
-          const json = (await response.json().catch(() => ({}))) as { error?: string };
+          const json = (await readJsonRes(response).catch(() => ({}))) as { error?: string };
           alert(json.error ?? "Не удалось создать вакансию.");
         }
       }
@@ -1421,7 +1454,7 @@ export default function App() {
   };
  
   const handleVacancyDelete = async (vacancyId: string) => {
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     try {
       const response = await fetch(`${apiBase}/vacancies/${vacancyId}`, {
         method: "DELETE",
@@ -1440,7 +1473,7 @@ export default function App() {
  
   const handleCandidateSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const apiBase = getApiBase();
     
     try {
       if (editingCandidateId) {
@@ -1458,7 +1491,7 @@ export default function App() {
         });
         
         if (response.ok) {
-          const json = (await response.json()) as { data: Candidate };
+          const json = (await readJsonRes(response)) as { data: Candidate };
           setCandidates((prev) =>
             prev.map((candidate) =>
               candidate.id === editingCandidateId ? json.data : candidate
@@ -1490,7 +1523,7 @@ export default function App() {
         });
         
         if (response.ok) {
-          const json = (await response.json()) as { data: Candidate };
+          const json = (await readJsonRes(response)) as { data: Candidate };
           setCandidates((prev) => [...prev, json.data]);
           setShowCandidateModal(false);
           setCandidateForm({
@@ -2190,7 +2223,7 @@ export default function App() {
                   
                   setAiMatchingLoading(true);
                   setAiMatchingError(null);
-                  const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+                  const apiBase = getApiBase();
                   
                   try {
                     const response = await fetch(`${apiBase}/ai/match/batch`, {
@@ -2205,7 +2238,11 @@ export default function App() {
                       })
                     });
                     
-                    const data = await response.json();
+                    const data = (await readJsonRes(response)) as {
+                      error?: string;
+                      details?: string;
+                      matches?: AIMatchResult[];
+                    };
                     if (!response.ok) {
                       throw new Error(data.error ?? data.details ?? `Ошибка ${response.status}`);
                     }
@@ -2215,7 +2252,7 @@ export default function App() {
                         headers: { Authorization: `Bearer ${token}` }
                       });
                       if (matchRes.ok) {
-                        const matchJson = await matchRes.json();
+                        const matchJson = (await readJsonRes(matchRes)) as { data: Match[] };
                         setMatches(matchJson.data);
                       }
                     }
