@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { RUSSIAN_CITIES, SKILL_SUGGESTIONS } from "./vacancyFormData";
  
 type Vacancy = {
   id: string;
@@ -199,8 +200,6 @@ async function readJsonRes(res: Response): Promise<unknown> {
 const DEFAULT_VACANCY_FORM = {
   title: "",
   department: "",
-  location: "",
-  level: "Middle",
   status: "open",
   employeeType: "permanent" as "permanent" | "temporary",
   employmentType: "full" as "full" | "part" | "shift",
@@ -226,9 +225,15 @@ const DEFAULT_VACANCY_FORM = {
   skills: [] as string[],
   cityInput: ""
 };
- 
- 
- 
+
+function deriveVacancyLocation(form: typeof DEFAULT_VACANCY_FORM): string {
+  if (form.publicationCities.length > 0) return form.publicationCities.join(", ");
+  if (form.workFormat.includes("remote")) return "Удалённо";
+  const w = form.workAddress.trim();
+  if (w) return w;
+  return "Не указано";
+}
+
 type Integration = {
   service: string;
   status: string;
@@ -1398,7 +1403,7 @@ export default function App() {
       const payload = {
         title: vacancyForm.title,
         department: vacancyForm.department,
-        location: vacancyForm.location,
+        location: deriveVacancyLocation(vacancyForm),
         status: vacancyForm.status,
         details: {
           employeeType: vacancyForm.employeeType,
@@ -1485,7 +1490,6 @@ export default function App() {
       ...DEFAULT_VACANCY_FORM,
       title: vacancy.title,
       department: vacancy.department,
-      location: vacancy.location,
       status: vacancy.status,
       employeeType: (d.employeeType as "permanent" | "temporary") || "permanent",
       employmentType: (d.employmentType as "full" | "part" | "shift") || "full",
@@ -1507,7 +1511,12 @@ export default function App() {
           ? [String(d.scheduleHoursPerDay)]
           : [],
       nightShifts: !!d.nightShifts,
-      publicationCities: Array.isArray(d.publicationCities) ? d.publicationCities as string[] : [],
+      publicationCities:
+        Array.isArray(d.publicationCities) && (d.publicationCities as string[]).length > 0
+          ? (d.publicationCities as string[])
+          : vacancy.location
+            ? vacancy.location.split(",").map((s) => s.trim()).filter(Boolean)
+            : [],
       workAddress: String(d.workAddress ?? ""),
       salaryFrom: String(d.salaryFrom ?? ""),
       salaryTo: String(d.salaryTo ?? ""),
@@ -3228,16 +3237,6 @@ export default function App() {
                     required
                   />
                 </label>
-                <label className="field">
-                  Локация
-                  <input
-                    type="text"
-                    value={vacancyForm.location}
-                    onChange={(e) => setVacancyForm((prev) => ({ ...prev, location: e.target.value }))}
-                    placeholder="Удалённо"
-                    required
-                  />
-                </label>
               </div>
 
               <div className="vacancy-section">
@@ -3354,45 +3353,46 @@ export default function App() {
 
               <div className="vacancy-section">
                 <h4>График и часы работы</h4>
-                <p className="muted small">График работы — как чередуются рабочие и выходные дни</p>
-                <div className="chip-group">
-                  {["6/1", "5/2", "4/4", "4/3", "4/2", "3/3", "3/2", "2/2", "2/1", "1/3", "1/2", "По выходным", "Свободный", "Другое"].map((v) => (
-                    <button
-                      key={v}
-                      type="button"
-                      className={vacancyForm.schedule.includes(v) ? "chip active" : "chip"}
-                      onClick={() =>
+                <p className="muted small">Выберите варианты из списков</p>
+                <div className="field-row vacancy-schedule-row">
+                  <label className="field">
+                    График (смены / выходные)
+                    <select
+                      value={vacancyForm.schedule[0] ?? ""}
+                      onChange={(e) =>
                         setVacancyForm((prev) => ({
                           ...prev,
-                          schedule: prev.schedule.includes(v)
-                            ? prev.schedule.filter((item) => item !== v)
-                            : [...prev.schedule, v]
+                          schedule: e.target.value ? [e.target.value] : []
                         }))
                       }
                     >
-                      {v}
-                    </button>
-                  ))}
-                </div>
-                <p className="muted small vacancy-subtitle">Рабочие часы в день</p>
-                <div className="chip-group">
-                  {["2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "24", "По договорённости", "Другое"].map((v) => (
-                    <button
-                      key={v}
-                      type="button"
-                      className={vacancyForm.scheduleHoursPerDay.includes(v) ? "chip active" : "chip"}
-                      onClick={() =>
+                      <option value="">Не выбрано</option>
+                      {["6/1", "5/2", "4/4", "4/3", "4/2", "3/3", "3/2", "2/2", "2/1", "1/3", "1/2", "По выходным", "Свободный", "Другое"].map((v) => (
+                        <option key={v} value={v}>
+                          {v}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    Рабочие часы в день
+                    <select
+                      value={vacancyForm.scheduleHoursPerDay[0] ?? ""}
+                      onChange={(e) =>
                         setVacancyForm((prev) => ({
                           ...prev,
-                          scheduleHoursPerDay: prev.scheduleHoursPerDay.includes(v)
-                            ? prev.scheduleHoursPerDay.filter((item) => item !== v)
-                            : [...prev.scheduleHoursPerDay, v]
+                          scheduleHoursPerDay: e.target.value ? [e.target.value] : []
                         }))
                       }
                     >
-                      {v}
-                    </button>
-                  ))}
+                      <option value="">Не выбрано</option>
+                      {["2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "24", "По договорённости", "Другое"].map((v) => (
+                        <option key={v} value={v}>
+                          {v} ч
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
                 <label className="toggle-row mt-8">
                   <span>Есть вечерние или ночные смены</span>
@@ -3411,8 +3411,9 @@ export default function App() {
                   Город публикации
                   <input
                     type="text"
+                    list="vacancy-ru-cities"
                     value={vacancyForm.cityInput}
-                    placeholder="Укажите один или несколько"
+                    placeholder="Начните ввод — подсказки из списка городов РФ"
                     onChange={(e) => setVacancyForm((prev) => ({ ...prev, cityInput: e.target.value }))}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && vacancyForm.cityInput.trim()) {
@@ -3426,6 +3427,11 @@ export default function App() {
                     }}
                   />
                 </label>
+                <datalist id="vacancy-ru-cities">
+                  {RUSSIAN_CITIES.map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
                 {vacancyForm.publicationCities.length > 0 && (
                   <div className="chip-group">
                     {vacancyForm.publicationCities.map((city) => (
@@ -3546,26 +3552,20 @@ export default function App() {
                 <label className="field">
                   <input
                     type="text"
+                    list="vacancy-skill-suggestions"
                     value={vacancyForm.skills.join(", ")}
                     onChange={(e) => setVacancyForm((prev) => ({ ...prev, skills: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) }))}
-                    placeholder="Найдите или напишите свой вариант (через запятую)"
+                    placeholder="Начните ввод или перечислите через запятую"
                   />
                 </label>
+                <datalist id="vacancy-skill-suggestions">
+                  {SKILL_SUGGESTIONS.map((s) => (
+                    <option key={s} value={s} />
+                  ))}
+                </datalist>
               </div>
 
               <div className="vacancy-section">
-                <label className="field">
-                  Уровень
-                  <select
-                    value={vacancyForm.level}
-                    onChange={(e) => setVacancyForm((prev) => ({ ...prev, level: e.target.value }))}
-                  >
-                    <option>Junior</option>
-                    <option>Middle</option>
-                    <option>Senior</option>
-                    <option>Lead</option>
-                  </select>
-                </label>
                 <label className="field">
                   Статус
                   <select

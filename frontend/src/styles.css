@@ -759,6 +759,15 @@ body {
 .field-row .field select {
   min-width: 100px;
 }
+
+.vacancy-schedule-row {
+  margin-top: 8px;
+}
+
+.vacancy-schedule-row .field {
+  min-width: 200px;
+}
+
 .mt-8 {
   margin-top: 8px;
 }
