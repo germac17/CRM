@@ -30,10 +30,10 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id);
 
--- 3 тарифных плана с разным функционалом
+-- 3 тарифных плана с разным функционалом (₽/мес)
 INSERT INTO plans (name, slug, price_monthly, price_yearly, limit_vacancies, limit_candidates, ai_matching_enabled, limit_users, priority_support, hidden)
 VALUES
   ('Базовый', 'free', 0, 0, 3, 50, false, 1, false, false),
-  ('Старт', 'starter', 990, 9504, 15, 300, true, 3, false, false),
-  ('Про', 'pro', 3990, 38270, -1, 2000, true, 10, true, false)
+  ('Стандарт', 'starter', 5000, 50000, 15, 300, true, 3, false, false),
+  ('Бизнес', 'pro', 10000, 100000, -1, 2000, true, 10, true, false)
 ON CONFLICT (slug) DO NOTHING;

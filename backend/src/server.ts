@@ -253,8 +253,8 @@ app.get("/health", (_req, res) => {
 
 const DEFAULT_PLANS = [
   { id: "free", name: "Базовый", slug: "free", price_monthly: 0, price_yearly: null, limit_vacancies: 3, limit_candidates: 50, ai_matching_enabled: false, limit_users: 1, priority_support: false, integrations_allowed: [] },
-  { id: "starter", name: "Старт", slug: "starter", price_monthly: 990, price_yearly: 9504, limit_vacancies: 15, limit_candidates: 300, ai_matching_enabled: true, limit_users: 3, priority_support: false, integrations_allowed: [] },
-  { id: "pro", name: "Про", slug: "pro", price_monthly: 3990, price_yearly: 38270, limit_vacancies: -1, limit_candidates: 2000, ai_matching_enabled: true, limit_users: 10, priority_support: true, integrations_allowed: [] }
+  { id: "starter", name: "Стандарт", slug: "starter", price_monthly: 5000, price_yearly: 50000, limit_vacancies: 15, limit_candidates: 300, ai_matching_enabled: true, limit_users: 3, priority_support: false, integrations_allowed: [] },
+  { id: "pro", name: "Бизнес", slug: "pro", price_monthly: 10000, price_yearly: 100000, limit_vacancies: -1, limit_candidates: 2000, ai_matching_enabled: true, limit_users: 10, priority_support: true, integrations_allowed: [] }
 ];
 
 app.get("/plans", async (_req, res) => {
@@ -391,7 +391,9 @@ app.post("/candidates", authMiddleware, async (req, res) => {
     name: String(req.body.name ?? ""),
     role: String(req.body.role ?? ""),
     skills: Array.isArray(req.body.skills) ? req.body.skills : [],
-    stage: String(req.body.stage ?? "Скрининг")
+    stage: String(req.body.stage ?? "Отклик"),
+    source: String(req.body.source ?? ""),
+    notes: String(req.body.notes ?? "")
   };
   db.insertCandidate(userId, newCandidate);
   const { user_id, ...clean } = newCandidate;
@@ -405,6 +407,8 @@ app.put("/candidates/:id", authMiddleware, async (req, res) => {
   if (req.body.role != null) updates.role = String(req.body.role);
   if (req.body.stage != null) updates.stage = String(req.body.stage);
   if (Array.isArray(req.body.skills)) updates.skills = req.body.skills;
+  if (req.body.source != null) updates.source = String(req.body.source);
+  if (req.body.notes != null) updates.notes = String(req.body.notes);
 
   const data = db.updateCandidate(userId, req.params.id, updates);
   if (!data) { res.status(404).json({ error: "Кандидат не найден." }); return; }
@@ -1052,21 +1056,33 @@ app.post("/ai/match/batch", authMiddleware, async (req, res) => {
 
     const aiData = await aiResponse.json() as any;
 
-    if (auto_save && aiData.matches) {
+    if (auto_save && aiData.matches && Array.isArray(aiData.matches)) {
       db.deleteMatchesByVacancy(userId, vacancy_id);
 
       const newMatches = aiData.matches
-        .filter((m: any) => m.score >= 4.0)
+        .filter((m: any) => Number(m.score) >= 3.0)
         .map((m: any) => ({
           user_id: userId,
           candidate_id: m.candidate_id,
           vacancy_id: m.vacancy_id,
-          score: m.score / 10,
-          explanation: m.explanation
+          score: Number(m.score) / 10,
+          explanation: String(m.explanation ?? "")
         }));
 
       if (newMatches.length > 0) {
         db.insertMatches(userId, newMatches);
+      }
+
+      for (const m of aiData.matches as any[]) {
+        const cid = String(m.candidate_id ?? "").trim();
+        if (!cid) continue;
+        const score = Number(m.score) || 0;
+        const cat = String(m.category ?? "");
+        let nextStage = "Поиск";
+        if (cat === "Подходящие" || score >= 7) nextStage = "Интервью";
+        else if (cat === "Условно подходящие") nextStage = "Скрининг";
+        else nextStage = "Поиск";
+        db.updateCandidate(userId, cid, { stage: nextStage });
       }
     }
 

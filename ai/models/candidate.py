@@ -2,7 +2,7 @@
 Модели кандидата
 """
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class CandidateResume(BaseModel):
@@ -19,11 +19,15 @@ class CandidateResume(BaseModel):
 class Candidate(BaseModel):
     """Кандидат"""
     
+    model_config = ConfigDict(extra="ignore")
+    
     id: str = Field(..., description="ID кандидата")
     name: str = Field(..., description="Имя")
     role: str = Field(default="", description="Желаемая роль")
     skills: list[str] = Field(default_factory=list, description="Навыки")
     stage: str = Field(default="Скрининг", description="Этап найма")
+    source: str = Field(default="", description="Источник")
+    notes: str = Field(default="", description="Заметки")
     resume: Optional[CandidateResume] = Field(None, description="Детали резюме")
     
     def to_text(self) -> str:
@@ -33,6 +37,9 @@ class Candidate(BaseModel):
             f"Роль: {self.role}",
             f"Навыки: {', '.join(self.skills)}",
         ]
+        
+        if self.notes:
+            parts.append(f"Заметки: {self.notes}")
         
         if self.resume:
             parts.append(f"Опыт: {self.resume.experience_years} лет")

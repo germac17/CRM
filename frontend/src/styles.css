@@ -1750,3 +1750,103 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+.candidates-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.funnel-strip-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.funnel-strip-item {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px 8px;
+  text-align: center;
+}
+
+.funnel-strip-count {
+  display: block;
+  font-size: 20px;
+  font-weight: 700;
+  color: #0f766e;
+}
+
+.funnel-strip-label {
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.2;
+}
+
+.candidates-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.candidates-toolbar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.candidates-toolbar-controls input[type="search"] {
+  min-width: 200px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  font-size: 14px;
+}
+
+.candidates-toolbar-controls .field.inline {
+  margin: 0;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.candidates-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.candidates-table th,
+.candidates-table td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid #eef2f7;
+  vertical-align: top;
+}
+
+.candidates-table th {
+  font-weight: 600;
+  color: #475569;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.table-notes {
+  max-width: 240px;
+  word-break: break-word;
+}

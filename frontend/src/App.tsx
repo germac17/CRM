@@ -15,6 +15,8 @@ type Candidate = {
   role: string;
   skills: string[];
   stage: string;
+  source?: string;
+  notes?: string;
 };
  
 type Match = {
@@ -99,7 +101,7 @@ type SupportChat = {
   lastMessage?: SupportMessage;
 };
  
-const stageOrder = ["Поиск", "Скрининг", "Интервью", "Оффер", "Найм"];
+const stageOrder = ["Отклик", "Поиск", "Скрининг", "Интервью", "Оффер", "Найм"];
 
 const tabs = [
   { id: "dashboard", label: "Дашборд" },
@@ -349,10 +351,12 @@ export default function App() {
   const [candidateForm, setCandidateForm] = useState({
     name: "",
     role: "",
-    stage: "Скрининг",
+    stage: "Отклик",
     source: "",
     notes: ""
   });
+  const [candidateListQuery, setCandidateListQuery] = useState("");
+  const [candidateListStage, setCandidateListStage] = useState<string>("Все");
   const [integrationsList, setIntegrationsList] = useState<Integration[]>([]);
   const [showIntegrationModal, setShowIntegrationModal] = useState(false);
   const [selectedIntegrationService, setSelectedIntegrationService] = useState<string | null>(null);
@@ -585,6 +589,34 @@ export default function App() {
     return [...candidates]
       .sort((a, b) => (extractTimestampFromId(b.id) ?? 0) - (extractTimestampFromId(a.id) ?? 0))
       .slice(0, 5);
+  }, [candidates]);
+
+  const candidatesForTab = useMemo(() => {
+    let list = candidates;
+    if (candidateListStage !== "Все") {
+      list = list.filter((c) => c.stage === candidateListStage);
+    }
+    const q = candidateListQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (c) =>
+          c.name.toLowerCase().includes(q) ||
+          c.role.toLowerCase().includes(q) ||
+          (c.source && c.source.toLowerCase().includes(q))
+      );
+    }
+    return [...list].sort(
+      (a, b) => (extractTimestampFromId(b.id) ?? 0) - (extractTimestampFromId(a.id) ?? 0)
+    );
+  }, [candidates, candidateListQuery, candidateListStage]);
+
+  const funnelStageCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    stageOrder.forEach((s) => m.set(s, 0));
+    candidates.forEach((c) => {
+      if (m.has(c.stage)) m.set(c.stage, (m.get(c.stage) ?? 0) + 1);
+    });
+    return stageOrder.map((s) => ({ stage: s, count: m.get(s) ?? 0 }));
   }, [candidates]);
 
   const departmentOptions = useMemo(() => {
@@ -939,8 +971,8 @@ export default function App() {
       name: candidate.name,
       role: candidate.role,
       stage: candidate.stage,
-      source: "",
-      notes: ""
+      source: candidate.source ?? "",
+      notes: candidate.notes ?? ""
     });
     setShowCandidateModal(true);
   };
@@ -1522,7 +1554,9 @@ export default function App() {
           body: JSON.stringify({
             name: candidateForm.name,
             role: candidateForm.role,
-            stage: candidateForm.stage
+            stage: candidateForm.stage,
+            source: candidateForm.source,
+            notes: candidateForm.notes
           })
         });
         
@@ -1538,7 +1572,7 @@ export default function App() {
           setCandidateForm({
             name: "",
             role: "",
-            stage: "Скрининг",
+            stage: "Отклик",
             source: "",
             notes: ""
           });
@@ -1554,7 +1588,9 @@ export default function App() {
             name: candidateForm.name,
             role: candidateForm.role,
             stage: candidateForm.stage,
-            skills: []
+            skills: [],
+            source: candidateForm.source,
+            notes: candidateForm.notes
           })
         });
         
@@ -1565,7 +1601,7 @@ export default function App() {
           setCandidateForm({
             name: "",
             role: "",
-            stage: "Скрининг",
+            stage: "Отклик",
             source: "",
             notes: ""
           });
@@ -1940,83 +1976,131 @@ export default function App() {
       ) : null}
  
       {activeTab === "candidates" ? (
-        <section className="grid">
-          <div className="card">
-            <h3>Кандидаты в воронке</h3>
-            {loading ? (
-              <p className="muted">Загрузка кандидатов...</p>
-            ) : (
-              <ul className="funnel">
-                {candidates.map((candidate) => (
-                  <li key={candidate.id}>
-                    <div className="list-main">
-                      <span>
-                        {candidate.name}
-                        <span className="muted"> · {candidate.stage}</span>
-                      </span>
-                      <span className="muted">{candidate.role}</span>
-                    </div>
-                    <div className="list-actions">
-                      <button
-                        className="calendar-btn"
-                        type="button"
-                        onClick={() => handleAddCandidateToCalendar(candidate.id)}
-                        title="Добавить в календарь"
-                      >
-                        В календарь
-                      </button>
-                      <button
-                        className="secondary-btn"
-                        type="button"
-                        onClick={() => handleCandidateEdit(candidate.id)}
-                      >
-                        Редактировать
-                      </button>
-                      <button
-                        className="danger-btn"
-                        type="button"
-                        onClick={() => handleCandidateDelete(candidate.id)}
-                      >
-                        Удалить
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          <div className="card">
-            <h3>Кандидатский портал</h3>
-            <p className="muted">
-              Личный кабинет с подачей заявки, загрузкой резюме, согласием на
-              обработку данных и трекингом статуса.
+        <section className="candidates-section">
+          <div className="card candidates-funnel-strip">
+            <h3>Воронка найма</h3>
+            <p className="muted small">
+              Отклики и новые заявки начинаются с этапа «Отклик». После запуска ИИ-матчинга этапы обновляются: условно
+              подходящие → Скрининг, подходящие → Интервью, остальные → Поиск.
             </p>
-            <button
-              className="secondary-btn"
-              onClick={() => {
-                setEditingCandidateId(null);
-                setCandidateForm({
-                  name: "",
-                  role: "",
-                  stage: "Скрининг",
-                  source: "",
-                  notes: ""
-                });
-                setShowCandidateModal(true);
-              }}
-            >
-              Добавить кандидата
-            </button>
-            <div className="timeline">
+            <div className="funnel-strip-grid">
+              {funnelStageCounts.map(({ stage, count }) => (
+                <div key={stage} className="funnel-strip-item">
+                  <span className="funnel-strip-count">{count}</span>
+                  <span className="funnel-strip-label">{stage}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="card candidates-card">
+            <div className="candidates-toolbar">
               <div>
-                <strong>Статусы заявки</strong>
-                <p className="muted">Подача → Скрининг → Интервью → Оффер</p>
+                <h3>Кандидаты</h3>
+                <p className="muted">Таблица с фильтрами</p>
               </div>
-              <div>
-                <strong>Согласия</strong>
-                <p className="muted">GDPR и локальные требования</p>
+              <div className="candidates-toolbar-controls">
+                <input
+                  type="search"
+                  placeholder="Поиск: имя, роль, источник"
+                  value={candidateListQuery}
+                  onChange={(e) => setCandidateListQuery(e.target.value)}
+                  aria-label="Поиск кандидатов"
+                />
+                <label className="field inline">
+                  Этап
+                  <select value={candidateListStage} onChange={(e) => setCandidateListStage(e.target.value)}>
+                    <option value="Все">Все этапы</option>
+                    {stageOrder.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  className="secondary-btn"
+                  type="button"
+                  onClick={() => {
+                    setEditingCandidateId(null);
+                    setCandidateForm({
+                      name: "",
+                      role: "",
+                      stage: "Отклик",
+                      source: "",
+                      notes: ""
+                    });
+                    setShowCandidateModal(true);
+                  }}
+                >
+                  Добавить кандидата
+                </button>
               </div>
             </div>
+            {loading ? (
+              <p className="muted">Загрузка кандидатов…</p>
+            ) : candidatesForTab.length === 0 ? (
+              <p className="muted">Никого не найдено. Измените фильтр или добавьте кандидата.</p>
+            ) : (
+              <div className="table-wrap">
+                <table className="candidates-table">
+                  <thead>
+                    <tr>
+                      <th>Имя</th>
+                      <th>Роль</th>
+                      <th>Этап</th>
+                      <th>Источник</th>
+                      <th>Заметки</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {candidatesForTab.map((candidate) => (
+                      <tr key={candidate.id}>
+                        <td>
+                          <strong>{candidate.name}</strong>
+                        </td>
+                        <td>{candidate.role}</td>
+                        <td>
+                          <span className="pill">{candidate.stage}</span>
+                        </td>
+                        <td className="muted">{candidate.source?.trim() ? candidate.source : "—"}</td>
+                        <td className="muted table-notes">
+                          {candidate.notes?.trim()
+                            ? candidate.notes.length > 100
+                              ? `${candidate.notes.slice(0, 100)}…`
+                              : candidate.notes
+                            : "—"}
+                        </td>
+                        <td className="table-actions">
+                          <button
+                            type="button"
+                            className="calendar-btn"
+                            onClick={() => handleAddCandidateToCalendar(candidate.id)}
+                            title="Добавить в календарь"
+                          >
+                            Календарь
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary-btn"
+                            onClick={() => handleCandidateEdit(candidate.id)}
+                          >
+                            Изменить
+                          </button>
+                          <button
+                            type="button"
+                            className="danger-btn"
+                            onClick={() => handleCandidateDelete(candidate.id)}
+                          >
+                            Удалить
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </section>
       ) : null}
@@ -3575,10 +3659,11 @@ export default function App() {
                     }))
                   }
                 >
-                  <option>Поиск</option>
-                  <option>Скрининг</option>
-                  <option>Интервью</option>
-                  <option>Оффер</option>
+                  {stageOrder.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label className="field">

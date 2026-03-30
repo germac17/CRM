@@ -1,0 +1,44 @@
+[
+  {
+    "id": "free",
+    "name": "Базовый",
+    "slug": "free",
+    "price_monthly": 0,
+    "price_yearly": null,
+    "limit_vacancies": 3,
+    "limit_candidates": 50,
+    "ai_matching_enabled": false,
+    "limit_users": 1,
+    "priority_support": false,
+    "integrations_allowed": [],
+    "hidden": false
+  },
+  {
+    "id": "starter",
+    "name": "Стандарт",
+    "slug": "starter",
+    "price_monthly": 5000,
+    "price_yearly": 50000,
+    "limit_vacancies": 15,
+    "limit_candidates": 300,
+    "ai_matching_enabled": true,
+    "limit_users": 3,
+    "priority_support": false,
+    "integrations_allowed": [],
+    "hidden": false
+  },
+  {
+    "id": "pro",
+    "name": "Бизнес",
+    "slug": "pro",
+    "price_monthly": 10000,
+    "price_yearly": 100000,
+    "limit_vacancies": -1,
+    "limit_candidates": 2000,
+    "ai_matching_enabled": true,
+    "limit_users": 10,
+    "priority_support": true,
+    "integrations_allowed": [],
+    "hidden": false
+  }
+]
